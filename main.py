@@ -190,7 +190,11 @@ async def czyszczenie_bazy():
 # =========================================================
 # 5. URUCHOMIENIE (TUTAJ WKLEJ TOKEN BOTA W CIAPKI)
 # =========================================================
-try:
-    bot.run("MTUxODMyOTI3MDkzNjUzNTIxMQ.G1Pg1I.J0SEEpgqN7ypQwsC38P9k054XqGP55S-KFM9dg")
-except Exception as e:
-    print(f"\n[!!!] BLAD STARTU BOTA: {e}\n")
+import os
+# ... reszta importów ...
+
+# Zamiast wklejania tokena, użyj tego:
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+
+# A na dole w funkcji startowej:
+bot.run(TOKEN)
