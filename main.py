@@ -55,32 +55,30 @@ def wyczysc_stare_wpisy():
 # =========================================================
 # 3. SILNIK OCR (CZYTANIE ZDJĘĆ)
 # =========================================================
+reader = easyocr.Reader(['pl', 'en'], gpu=False)
+result = reader.readtext(image_path)
 def analizuj_screen(image_path):
-    reader = easyocr.Reader(["pl", "en"])
-    result = reader.readtext(image_path)
 
     nieobecni = []
     w_sekcji_nieobecnych = False
 
-    for bbox, text, prob in result:
+for bbox, text, prob in result:
         text_clean = text.strip()
-
-        if "Niezarejestrowani" in text_clean:
+if "Niezarejestrowani" in text_clean:
             w_sekcji_nieobecnych = True
             continue
 
-        if "Zarejestrowani" in text_clean or "USUŃ" in text_clean:
+if "Zarejestrowani" in text_clean or "USUŃ" in text_clean:
             w_sekcji_nieobecnych = False
             break
-
-        if w_sekcji_nieobecnych and text_clean:
+if w_sekcji_nieobecnych and text_clean:
             # Odcina poziom, np. "FeedErik (Poziom 439)" zostawia "FeedErik"
             nick = re.split(r"\(", text_clean)[0].strip()
 
             if len(nick) > 2:
                 nieobecni.append(nick)
 
-    return nieobecni
+return nieobecni
 
 
 # =========================================================
