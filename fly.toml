@@ -11,7 +11,7 @@ DISCORD_BOT_TOKEN = "DISCORD_BOT_TOKEN"
 app = "python main.py"
 
 [[vm]]
-memory = '256mb'
+memory = '512mb'
 swap_size_mb = 512  # TO JEST KLUCZOWA ZMIANA
 cpu_kind = 'shared'
 cpus = 1
