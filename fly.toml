@@ -1,3 +1,8 @@
+# fly.toml app configuration file generated for wg-dc-bot on 2026-06-21T21:28:11Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
 app = 'wg-dc-bot'
 primary_region = 'ams'
 
@@ -8,10 +13,17 @@ dockerfile = 'Dockerfile'
 DISCORD_BOT_TOKEN = "DISCORD_BOT_TOKEN"
 
 [processes]
-app = "python main.py"
+  app = 'python main.py'
 
 [[vm]]
-memory = '256mb'
-swap_size_mb = 512  # TO JEST KLUCZOWA ZMIANA
-cpu_kind = 'shared'
-cpus = 1
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 512
+  processes = ['app']
+  size = 'shared-cpu-1x'
