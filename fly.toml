@@ -1,23 +1,16 @@
-# fly.toml app configuration file generated for wg-dc-bot on 2026-06-21T20:35:37Z
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
 app = 'wg-dc-bot'
 primary_region = 'ams'
 
 [build]
+dockerfile = 'Dockerfile'
 
-[http_service]
-  internal_port = 8080
-  force_https = true
-  auto_stop_machines = 'stop'
-  auto_start_machines = true
-  min_machines_running = 0
-  processes = ['app']
+[env]
+# Tutaj zostanie wstrzyknięty Twój token z ustawień Fly.io
+DISCORD_BOT_TOKEN = "TWÓJ_TOKEN_Z_USTAWIEŃ"
+
+# CAŁĄ SEKCJĘ [[http_service]] USUWAMY, BO BOTA NIE TRZEBA "ODPYTYWAĆ" O STRONĘ WWW
 
 [[vm]]
-  memory = '1gb'
-  cpu_kind = 'shared'
-  cpus = 1
-  memory_mb = 256
+memory = '256mb'
+cpu_kind = 'shared'
+cpus = 1
