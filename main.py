@@ -56,7 +56,7 @@ def wyczysc_stare_wpisy():
 # 3. SILNIK OCR (CZYTANIE ZDJĘĆ)
 # =========================================================
 def analizuj_screen(image_path):
-    reader = easyocr.Reader(["pl", "en"])
+reader = easyocr.Reader(['pl'], gpu=False, model_storage_directory='/tmp/.EasyOCR')
     result = reader.readtext(image_path)
 
     nieobecni = []
