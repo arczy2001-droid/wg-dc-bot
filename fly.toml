@@ -5,10 +5,10 @@ primary_region = 'ams'
 dockerfile = 'Dockerfile'
 
 [env]
-# Tutaj zostanie wstrzyknięty Twój token z ustawień Fly.io
-DISCORD_BOT_TOKEN = "TWÓJ_TOKEN_Z_USTAWIEŃ"
+DISCORD_BOT_TOKEN = "DISCORD_BOT_TOKEN"
 
-# CAŁĄ SEKCJĘ [[http_service]] USUWAMY, BO BOTA NIE TRZEBA "ODPYTYWAĆ" O STRONĘ WWW
+[processes]
+app = "python main.py"
 
 [[vm]]
 memory = '256mb'
