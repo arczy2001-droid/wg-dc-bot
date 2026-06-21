@@ -1,0 +1,13 @@
+app = 'wg-dc-bot'
+primary_region = 'ams'
+
+[build]
+dockerfile = 'Dockerfile'
+
+[env]
+DISCORD_BOT_TOKEN = "DISCORD_BOT_TOKEN"
+
+[[vm]]
+memory = '256mb'
+cpu_kind = 'shared'
+cpus = 1
