@@ -5,8 +5,9 @@ import easyocr
 import sqlite3
 import re
 from datetime import datetime
+from PIL import Image
 
-# 1. KONFIGURACJA — TWOJE PRAWDZIWE ID KANAŁÓW Z DISCORDA
+# 1. KONFIGURACJA — TWOJE ID KANAŁÓW Z DISCORDA
 KANALY_SWIATOW = {
     1518327717676716162: "Swiat1",
     1518327790703874139: "Swiat2",
@@ -30,13 +31,26 @@ def init_db():
     conn.commit()
     conn.close()
 
-# 3. SILNIK OCR
+# 3. SILNIK OCR (ZOPTYMALIZOWANY POD MICRO INSTANCJĘ)
 def analizuj_screen(image_path):
-    result = reader.readtext(image_path)
+    # Optymalizacja obrazu: Zmniejszamy wagę pliku przed analizą AI
+    try:
+        with Image.open(image_path) as img:
+            # Jeśli obraz jest bardzo duży, zmniejszamy go o połowę
+            if img.width > 1500:
+                new_size = (img.width // 2, img.height // 2)
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
+            img.convert("L").save("optimized_temp.png", "PNG")  # Konwersja do odcieni szarości przyspiesza OCR
+        target_path = "optimized_temp.png"
+    except Exception:
+        target_path = image_path
+
+    # Wywołanie readtext z wyłączonym zaawansowanym grupowaniem (detail=0 oszczędza CPU)
+    result = reader.readtext(target_path, detail=0, paragraph=False)
     nieobecni = []
     w_sekcji_nieobecnych = False
 
-    for bbox, text, prob in result:
+    for text in result:
         text_clean = text.strip()
         if "Niezarejestrowani" in text_clean:
             w_sekcji_nieobecnych = True
@@ -48,6 +62,10 @@ def analizuj_screen(image_path):
             nick = re.split(r"\(", text_clean)[0].strip()
             if len(nick) > 2:
                 nieobecni.append(nick)
+                
+    if os.path.exists("optimized_temp.png"):
+        os.remove("optimized_temp.png")
+        
     return nieobecni
 
 # 4. GŁÓWNY KOD BOTA
@@ -83,7 +101,6 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # Sprawdzanie czy kanał jest w naszej konfiguracji i czy dodano plik
     if message.channel.id in KANALY_SWIATOW and message.attachments:
         swiat = KANALY_SWIATOW[message.channel.id]
         attachment = message.attachments[0]
@@ -116,7 +133,6 @@ async def on_message(message):
                 if os.path.exists(file_path):
                     os.remove(file_path)
 
-    # To pozwala na działanie komend tekstowych (np. !stan) obok sprawdzania obrazków
     await bot.process_commands(message)
 
 bot.run(TOKEN)
