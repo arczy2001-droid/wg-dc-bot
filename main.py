@@ -5,7 +5,7 @@ import pytesseract
 import sqlite3
 import re
 from datetime import datetime
-from PIL import Image
+from PIL import Image, ImageEnhance
 import asyncio
 
 # 1. KONFIGURACJA — TWOJE KANAŁY
@@ -28,15 +28,24 @@ def init_db():
     conn.commit()
     conn.close()
 
-# 3. LEKKI SILNIK OCR (TESSERACT)
+# 3. PROFESJONALNY PRE-PROCESSING OBRAZU DLA TESSERACTA
 def _blokujaca_analiza_tesseract(image_path):
     try:
         with Image.open(image_path) as img:
-            if img.width > 1200:
-                new_size = (img.width // 2, img.height // 2)
-                img = img.resize(new_size, Image.Resampling.LANCZOS)
+            # A. Wymuszenie stałej szerokości 1600px (idealna wielkość czcionki dla OCR)
+            target_width = 1600
+            w_percent = (target_width / float(img.width))
+            target_height = int((float(img.height) * float(w_percent)))
+            img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
+
+            # B. Skala szarości + Ekstremalny Kontrast (2.5x)
+            # Zabija tło pergaminu do zera i wymazuje ikonki klas postaci
             img = img.convert("L")
-            text = pytesseract.image_to_string(img, lang="pol+eng")
+            enhancer = ImageEnhance.Contrast(img)
+            img = enhancer.enhance(2.5)
+
+            # C. PSM 6: Wymuszenie czytania linijka pod linijką w dół
+            text = pytesseract.image_to_string(img, lang="pol+eng", config="--psm 6")
             return text.splitlines()
     except Exception as e:
         print(f"Błąd ocr: {e}")
@@ -56,7 +65,6 @@ async def on_ready():
     print(f"Zalogowano pomyślnie jako: {bot.user.name}")
     init_db()
 
-# KOMENDA !stan
 @bot.command(name="stan")
 async def stan(ctx):
     conn = sqlite3.connect("gildia.db")
@@ -66,7 +74,7 @@ async def stan(ctx):
     conn.close()
     
     if not rows:
-        await ctx.send("📋 Baza danych jest pusta. Brak zapisanych minusów.")
+        await ctx.send("📋 Baza danych jest pusta. Brak zapisanych nieobecności.")
         return
         
     raport = "📊 **Aktualny stan minusów (brak rejestracji):**\n"
@@ -84,7 +92,7 @@ async def on_message(message):
         attachment = message.attachments[0]
 
         if attachment.filename.lower().endswith((".png", ".jpg", ".jpeg")):
-            potwierdzenie = await message.channel.send("🔄 Przetwarzam raport (Tesseract)...")
+            potwierdzenie = await message.channel.send("🔄 Przetwarzam raport...")
             file_path = f"temp_{attachment.filename}"
             await attachment.save(file_path)
 
@@ -107,16 +115,14 @@ async def on_message(message):
                         break
                         
                     if w_sekcji_nieobecnych:
-                        # 1. Odetnij "(Poziom XYZ)"
                         surowy_nick = re.split(r"\(", text_clean)[0].strip()
                         
-                        # 2. FILTR "EGZORCYSTA" — usuwa halucynacje z ikon (np. '47', '»', '•')
+                        # ULEPSZONY EGZORCYSTA: wyłapuje dwuliterowe duchy z ikon (np. 'CA', '47', 'II')
                         czlony = surowy_nick.split()
                         if len(czlony) > 1:
-                            pierwszy = czlony[0]
-                            # Jeśli pierwszy człon nie ma ani jednej litery ALBO to samotna liczba 1-2 cyfrowa
-                            if not re.search(r'[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ]', pierwszy) or (len(pierwszy) <= 2 and pierwszy.isdigit()):
-                                surowy_nick = " ".join(czlony[1:]) # Sklejamy z powrotem, pomijając śmieć z ikony
+                            p = czlony[0]
+                            if len(p) <= 2 and (p.isupper() or p.isdigit() or not p.isalnum()):
+                                surowy_nick = " ".join(czlony[1:])
 
                         if len(surowy_nick) > 2:
                             nieobecni.append(surowy_nick)
@@ -145,3 +151,4 @@ async def on_message(message):
     await bot.process_commands(message)
 
 bot.run(TOKEN)
+            
