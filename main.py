@@ -6,6 +6,7 @@ import sqlite3
 import re
 from datetime import datetime
 from PIL import Image
+import asyncio
 
 # 1. KONFIGURACJA — TWOJE ID KANAŁÓW Z DISCORDA
 KANALY_SWIATOW = {
@@ -31,42 +32,31 @@ def init_db():
     conn.commit()
     conn.close()
 
-# 3. SILNIK OCR (ZOPTYMALIZOWANY POD MICRO INSTANCJĘ)
-def analizuj_screen(image_path):
-    # Optymalizacja obrazu: Zmniejszamy wagę pliku przed analizą AI
+# 3. SILNIK OCR (URUCHAMIANY SYNCHRONICZNIE W TLE)
+def _blokujaca_analiza_ocr(image_path):
     try:
         with Image.open(image_path) as img:
-            # Jeśli obraz jest bardzo duży, zmniejszamy go o połowę
-            if img.width > 1500:
+            if img.width > 1200:
                 new_size = (img.width // 2, img.height // 2)
                 img = img.resize(new_size, Image.Resampling.LANCZOS)
-            img.convert("L").save("optimized_temp.png", "PNG")  # Konwersja do odcieni szarości przyspiesza OCR
+            img.convert("L").save("optimized_temp.png", "PNG")
         target_path = "optimized_temp.png"
     except Exception:
         target_path = image_path
 
-    # Wywołanie readtext z wyłączonym zaawansowanym grupowaniem (detail=0 oszczędza CPU)
+    # Sam odczyt EasyOCR
     result = reader.readtext(target_path, detail=0, paragraph=False)
-    nieobecni = []
-    w_sekcji_nieobecnych = False
-
-    for text in result:
-        text_clean = text.strip()
-        if "Niezarejestrowani" in text_clean:
-            w_sekcji_nieobecnych = True
-            continue
-        if "Zarejestrowani" in text_clean or "USUŃ" in text_clean:
-            w_sekcji_nieobecnych = False
-            break
-        if w_sekcji_nieobecnych and text_clean:
-            nick = re.split(r"\(", text_clean)[0].strip()
-            if len(nick) > 2:
-                nieobecni.append(nick)
-                
+    
     if os.path.exists("optimized_temp.png"):
         os.remove("optimized_temp.png")
         
-    return nieobecni
+    return result
+
+# Asynchroniczny "opakowywacz" — zapobiega zamrażaniu bota
+async def analizuj_screen_async(image_path):
+    loop = asyncio.get_running_loop()
+    # Uruchamia ciężkie obliczenia w osobnym wątku/procesorze, nie blokując sieci Discorda
+    return await loop.run_in_executor(None, _blokujaca_analiza_ocr, image_path)
 
 # 4. GŁÓWNY KOD BOTA
 intents = discord.Intents.default()
@@ -111,7 +101,25 @@ async def on_message(message):
             await attachment.save(file_path)
 
             try:
-                nieobecni = analizuj_screen(file_path)
+                # WYWOŁANIE ASYNCHRONICZNE — bot teraz "żyje" podczas pracy AI
+                raw_text_list = await analizuj_screen_async(file_path)
+                
+                nieobecni = []
+                w_sekcji_nieobecnych = False
+
+                for text in raw_text_list:
+                    text_clean = text.strip()
+                    if "Niezarejestrowani" in text_clean:
+                        w_sekcji_nieobecnych = True
+                        continue
+                    if "Zarejestrowani" in text_clean or "USUŃ" in text_clean:
+                        w_sekcji_nieobecnych = False
+                        break
+                    if w_sekcji_nieobecnych and text_clean:
+                        nick = re.split(r"\(", text_clean)[0].strip()
+                        if len(nick) > 2:
+                            nieobecni.append(nick)
+
                 if nieobecni:
                     conn = sqlite3.connect("gildia.db")
                     cursor = conn.cursor()
