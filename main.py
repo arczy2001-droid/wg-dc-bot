@@ -7,11 +7,10 @@ import re
 from datetime import datetime
 
 # 1. KONFIGURACJA
-# Token pobierany ze zmiennej środowiskowej ustawionej w Fly.io
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-KANALY_SWIATOW = {123456789: "Swiat1", 987654321: "Swiat2"} # Wpisz tu swoje ID kanałów
+KANALY_SWIATOW = {123456789: "Swiat1", 987654321: "Swiat2"} # Tutaj wkleisz swoje ID kanałów z Discorda
 
-# 2. INICJALIZACJA SILNIKA (Poza funkcją, aby oszczędzać RAM)
+# 2. INICJALIZACJA SILNIKA
 print("Ładowanie modelu EasyOCR...")
 reader = easyocr.Reader(['pl', 'en'], gpu=False)
 
@@ -48,7 +47,7 @@ def analizuj_screen(image_path):
 # 4. GŁÓWNY KOD BOTA
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.CommandsBot(command_prefix="!", intents=intents) if hasattr(commands, 'CommandsBot') else commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
