@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 import os
-import easyocr
+import pytesseract
 import sqlite3
 import re
 from datetime import datetime
@@ -18,10 +18,6 @@ KANALY_SWIATOW = {
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
-# 2. INICJALIZACJA SILNIKA
-print("Ładowanie modelu EasyOCR...")
-reader = easyocr.Reader(['pl', 'en'], gpu=False)
-
 def init_db():
     conn = sqlite3.connect("gildia.db")
     cursor = conn.cursor()
@@ -32,31 +28,26 @@ def init_db():
     conn.commit()
     conn.close()
 
-# 3. SILNIK OCR (URUCHAMIANY SYNCHRONICZNIE W TLE)
-def _blokujaca_analiza_ocr(image_path):
+# 3. LEKKI SILNIK OCR (TESSERACT)
+def _blokujaca_analiza_tesseract(image_path):
     try:
         with Image.open(image_path) as img:
+            # Optymalizacja obrazu pod OCR
             if img.width > 1200:
                 new_size = (img.width // 2, img.height // 2)
                 img = img.resize(new_size, Image.Resampling.LANCZOS)
-            img.convert("L").save("optimized_temp.png", "PNG")
-        target_path = "optimized_temp.png"
-    except Exception:
-        target_path = image_path
+            img = img.convert("L")  # Skala szarości
+            
+            # Wyciągamy sam tekst (używamy polskiego i angielskiego)
+            text = pytesseract.image_to_string(img, lang="pol+eng")
+            return text.splitlines()
+    except Exception as e:
+        print(f"Błąd krytyczny obrazu: {e}")
+        return []
 
-    # Sam odczyt EasyOCR
-    result = reader.readtext(target_path, detail=0, paragraph=False)
-    
-    if os.path.exists("optimized_temp.png"):
-        os.remove("optimized_temp.png")
-        
-    return result
-
-# Asynchroniczny "opakowywacz" — zapobiega zamrażaniu bota
 async def analizuj_screen_async(image_path):
     loop = asyncio.get_running_loop()
-    # Uruchamia ciężkie obliczenia w osobnym wątku/procesorze, nie blokując sieci Discorda
-    return await loop.run_in_executor(None, _blokujaca_analiza_ocr, image_path)
+    return await loop.run_in_executor(None, _blokujaca_analiza_tesseract, image_path)
 
 # 4. GŁÓWNY KOD BOTA
 intents = discord.Intents.default()
@@ -96,26 +87,29 @@ async def on_message(message):
         attachment = message.attachments[0]
 
         if attachment.filename.lower().endswith((".png", ".jpg", ".jpeg")):
-            potwierdzenie = await message.channel.send("🔄 Przetwarzam raport...")
+            potwierdzenie = await message.channel.send("🔄 Przetwarzam raport (Lekki silnik Tesseract)...")
             file_path = f"temp_{attachment.filename}"
             await attachment.save(file_path)
 
             try:
-                # WYWOŁANIE ASYNCHRONICZNE — bot teraz "żyje" podczas pracy AI
-                raw_text_list = await analizuj_screen_async(file_path)
+                raw_lines = await analizuj_screen_async(file_path)
                 
                 nieobecni = []
                 w_sekcji_nieobecnych = False
 
-                for text in raw_text_list:
-                    text_clean = text.strip()
+                for line in raw_lines:
+                    text_clean = line.strip()
+                    if not text_clean:
+                        continue
+                        
                     if "Niezarejestrowani" in text_clean:
                         w_sekcji_nieobecnych = True
                         continue
                     if "Zarejestrowani" in text_clean or "USUŃ" in text_clean:
                         w_sekcji_nieobecnych = False
                         break
-                    if w_sekcji_nieobecnych and text_clean:
+                        
+                    if w_sekcji_nieobecnych:
                         nick = re.split(r"\(", text_clean)[0].strip()
                         if len(nick) > 2:
                             nieobecni.append(nick)
