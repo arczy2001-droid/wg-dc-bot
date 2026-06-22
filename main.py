@@ -8,7 +8,7 @@ from datetime import datetime
 from PIL import Image
 import asyncio
 
-# 1. KONFIGURACJA — TWOJE ID KANAŁÓW Z DISCORDA
+# 1. KONFIGURACJA — TWOJE KANAŁY
 KANALY_SWIATOW = {
     1518327717676716162: "Swiat1",
     1518327790703874139: "Swiat2",
@@ -32,17 +32,14 @@ def init_db():
 def _blokujaca_analiza_tesseract(image_path):
     try:
         with Image.open(image_path) as img:
-            # Optymalizacja obrazu pod OCR
             if img.width > 1200:
                 new_size = (img.width // 2, img.height // 2)
                 img = img.resize(new_size, Image.Resampling.LANCZOS)
-            img = img.convert("L")  # Skala szarości
-            
-            # Wyciągamy sam tekst (używamy polskiego i angielskiego)
+            img = img.convert("L")
             text = pytesseract.image_to_string(img, lang="pol+eng")
             return text.splitlines()
     except Exception as e:
-        print(f"Błąd krytyczny obrazu: {e}")
+        print(f"Błąd ocr: {e}")
         return []
 
 async def analizuj_screen_async(image_path):
@@ -87,7 +84,7 @@ async def on_message(message):
         attachment = message.attachments[0]
 
         if attachment.filename.lower().endswith((".png", ".jpg", ".jpeg")):
-            potwierdzenie = await message.channel.send("🔄 Przetwarzam raport (Lekki silnik Tesseract)...")
+            potwierdzenie = await message.channel.send("🔄 Przetwarzam raport (Tesseract)...")
             file_path = f"temp_{attachment.filename}"
             await attachment.save(file_path)
 
@@ -110,9 +107,19 @@ async def on_message(message):
                         break
                         
                     if w_sekcji_nieobecnych:
-                        nick = re.split(r"\(", text_clean)[0].strip()
-                        if len(nick) > 2:
-                            nieobecni.append(nick)
+                        # 1. Odetnij "(Poziom XYZ)"
+                        surowy_nick = re.split(r"\(", text_clean)[0].strip()
+                        
+                        # 2. FILTR "EGZORCYSTA" — usuwa halucynacje z ikon (np. '47', '»', '•')
+                        czlony = surowy_nick.split()
+                        if len(czlony) > 1:
+                            pierwszy = czlony[0]
+                            # Jeśli pierwszy człon nie ma ani jednej litery ALBO to samotna liczba 1-2 cyfrowa
+                            if not re.search(r'[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ]', pierwszy) or (len(pierwszy) <= 2 and pierwszy.isdigit()):
+                                surowy_nick = " ".join(czlony[1:]) # Sklejamy z powrotem, pomijając śmieć z ikony
+
+                        if len(surowy_nick) > 2:
+                            nieobecni.append(surowy_nick)
 
                 if nieobecni:
                     conn = sqlite3.connect("gildia.db")
