@@ -6,9 +6,15 @@ import sqlite3
 import re
 from datetime import datetime
 
-# 1. KONFIGURACJA
+# 1. KONFIGURACJA — TWOJE PRAWDZIWE ID KANAŁÓW Z DISCORDA
+KANALY_SWIATOW = {
+    1518327717676716162: "Swiat1",
+    1518327790703874139: "Swiat2",
+    1518327805081817160: "Swiat3",
+    1518327819292250254: "Swiat4"
+}
+
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-KANALY_SWIATOW = {123456789: "Swiat1", 987654321: "Swiat2"} # Tutaj wkleisz swoje ID kanałów z Discorda
 
 # 2. INICJALIZACJA SILNIKA
 print("Ładowanie modelu EasyOCR...")
@@ -47,18 +53,37 @@ def analizuj_screen(image_path):
 # 4. GŁÓWNY KOD BOTA
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.CommandsBot(command_prefix="!", intents=intents) if hasattr(commands, 'CommandsBot') else commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
     print(f"Zalogowano pomyślnie jako: {bot.user.name}")
     init_db()
 
+# KOMENDA !stan
+@bot.command(name="stan")
+async def stan(ctx):
+    conn = sqlite3.connect("gildia.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT swiat, nick, COUNT(*) FROM nieobecnosci GROUP BY swiat, nick")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    if not rows:
+        await ctx.send("📋 Baza danych jest pusta. Brak zapisanych minusów.")
+        return
+        
+    raport = "📊 **Aktualny stan minusów (brak rejestracji):**\n"
+    for swiat, nick, ilosc in rows:
+        raport += f"• [{swiat}] **{nick}**: {ilosc}x ❌\n"
+    await ctx.send(raport)
+
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
+    # Sprawdzanie czy kanał jest w naszej konfiguracji i czy dodano plik
     if message.channel.id in KANALY_SWIATOW and message.attachments:
         swiat = KANALY_SWIATOW[message.channel.id]
         attachment = message.attachments[0]
@@ -91,6 +116,7 @@ async def on_message(message):
                 if os.path.exists(file_path):
                     os.remove(file_path)
 
+    # To pozwala na działanie komend tekstowych (np. !stan) obok sprawdzania obrazków
     await bot.process_commands(message)
 
 bot.run(TOKEN)
