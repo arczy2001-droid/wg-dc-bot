@@ -40,6 +40,7 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=discord.Intents.all())
     async def setup_hook(self):
         self.czyszczenie.start()
+        self.niedzielny_ranking.start()
         await self.tree.sync()
 
     @tasks.loop(hours=1)
@@ -47,6 +48,24 @@ class MyBot(commands.Bot):
         conn = sqlite3.connect("gildia.db")
         conn.cursor().execute("DELETE FROM nieobecnosci WHERE data_wpisu <= ?", (datetime.now() - timedelta(days=7, hours=1),))
         conn.commit(); conn.close()
+
+    @tasks.loop(minutes=1)
+    async def niedzielny_ranking(self):
+        now = datetime.now()
+        # 6 oznacza niedzielę w Pythonie (0=poniedziałek, ..., 6=niedziela)
+        if now.weekday() == 6 and now.hour == 21 and now.minute == 0:
+            conn = sqlite3.connect("gildia.db")
+            swiaty = conn.cursor().execute("SELECT nazwa, kanal_id FROM swiaty").fetchall()
+            for swiat, kanal_id in swiaty:
+                res = conn.cursor().execute("SELECT nick, COUNT(*) FROM nieobecnosci WHERE swiat=? GROUP BY nick ORDER BY COUNT(*) DESC", (swiat.lower(),)).fetchall()
+                txt = "\n".join([f"{r[0]}: {r[1]}x" for r in res]) if res else "Brak zarejestrowanych nieobecności."
+                try:
+                    target_chan = self.get_channel(int(kanal_id)) or await self.fetch_channel(int(kanal_id))
+                    if target_chan:
+                        await target_chan.send(f"📊 **Cotygodniowy Ranking Nieobecności ({swiat.upper()}):**\n```\n{txt}\n```")
+                except Exception as e:
+                    print(f"Błąd automatycznego wysyłania rankingu dla świata {swiat}: {e}")
+            conn.close()
 
 bot = MyBot()
 
@@ -58,12 +77,12 @@ async def sprawdz_pozwolenie(interaction: discord.Interaction) -> bool:
     if res:
         kanal_id = int(res[0])
         if interaction.channel_id != kanal_id:
-            await interaction.response.send_message(f"❌ Tej komendy możesz używać tylko na głównym kanale komend: <#{kanal_id}>.", ephemeral=True)
+            await interaction.response.send_message(f"❌ Tej komendy możesz używać tylko na kanale centrum operacyjnego: <#{kanal_id}>.", ephemeral=True)
             return False
     return True
 
 # --- KOMENDY ---
-@bot.tree.command(name="wg_root", description="Ustawia kanał główny")
+@bot.tree.command(name="wg_root", description="Konfiguruje kanał główny")
 async def wg_root(interaction: discord.Interaction):
     conn = sqlite3.connect("gildia.db")
     conn.cursor().execute("INSERT OR REPLACE INTO ustawienia VALUES ('kanal_glowy', ?)", (str(interaction.channel_id),))
@@ -112,7 +131,7 @@ async def wg_delete_member(interaction: discord.Interaction, swiat: str, nick: s
     conn.commit(); conn.close()
     await interaction.response.send_message(f"🗑️ Usunięto {nick}.")
 
-@bot.tree.command(name="wg_member_list", description="Lista członków")
+@bot.tree.command(name="wg_member_list", description="Lista członków w 3 kolumnach")
 async def wg_member_list(interaction: discord.Interaction, swiat: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
@@ -137,7 +156,7 @@ async def wg_member_list(interaction: discord.Interaction, swiat: str):
     embed.set_footer(text=f"Łącznie członków: {len(res)}")
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="wg", description="Poczekaj..Ładuję...")
+@bot.tree.command(name="wg", description="Analizuje raport")
 async def wg(interaction: discord.Interaction, swiat: str, screen: discord.Attachment):
     if not await sprawdz_pozwolenie(interaction): return
     await interaction.response.defer()
@@ -149,15 +168,27 @@ async def wg(interaction: discord.Interaction, swiat: str, screen: discord.Attac
     await screen.save(path)
     sklad = [r[0] for r in conn.cursor().execute("SELECT nick FROM czlonkowie WHERE swiat=?", (swiat.lower(),)).fetchall()]
     lines = await analizuj_screen(path)
-    nieobecni = [n for n in [difflib.get_close_matches(re.sub(r'[^a-zA-Z0-9 ]', '', re.sub(r'\(.*?\)', '', l)).strip(), sklad, n=1, cutoff=0.5) for l in lines] if n]
     
-    nieobecni = [n[0] for n in nieobecni]
+    # Przetwarzanie z zachowaniem kolejności ze screena i eliminacją duplikatów
+    nieobecni = []
+    for l in lines:
+        cleaned = re.sub(r'[^a-zA-Z0-9 ]', '', re.sub(r'\(.*?\)', '', l)).strip()
+        match = difflib.get_close_matches(cleaned, sklad, n=1, cutoff=0.5)
+        if match:
+            nick = match[0]
+            if nick not in nieobecni:
+                nieobecni.append(nick)
+    
     for n in nieobecni: conn.cursor().execute("INSERT INTO nieobecnosci VALUES (?, ?, ?)", (swiat.lower(), n, datetime.now()))
     conn.commit(); conn.close()
     if os.path.exists(path): os.remove(path)
     
-    target_chan = bot.get_channel(int(swiat_data[0]))
-    await target_chan.send(f"🚨 Nieobecni ({swiat}): {', '.join(set(nieobecni))}")
+    try:
+        target_chan = bot.get_channel(int(swiat_data[0])) or await bot.fetch_channel(int(swiat_data[0]))
+        await target_chan.send(f"🚨 Nieobecni ({swiat.upper()}): {', '.join(nieobecni)}")
+    except Exception as e:
+        print(f"Błąd wysyłania raportu na kanał świata: {e}")
+        
     await interaction.followup.send("✅ Raport przetworzony.")
 
 @bot.tree.command(name="wg_absent_list", description="Ranking nieobecności")
@@ -166,10 +197,10 @@ async def wg_absent_list(interaction: discord.Interaction, swiat: str):
     conn = sqlite3.connect("gildia.db")
     res = conn.cursor().execute("SELECT nick, COUNT(*) FROM nieobecnosci WHERE swiat=? GROUP BY nick ORDER BY COUNT(*) DESC", (swiat.lower(),)).fetchall()
     conn.close()
-    txt = "\n".join([f"{r[0]}: {r[1]}x" for r in res])
+    txt = "\n".join([f"{r[0]}: {r[1]}x" for r in res]) if res else "Brak nieobecności."
     await interaction.response.send_message(f"📊 Ranking:\n{txt}")
 
-@bot.tree.command(name="wg_delete_raport", description="Usuwa ostatni raport na wybranym świecie")
+@bot.tree.command(name="wg_delete_raport", description="Usuwa ostatni raport świata")
 async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
@@ -178,7 +209,7 @@ async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
     conn.commit(); conn.close()
     await interaction.response.send_message("⏪ Cofnięto ostatni raport.")
 
-@bot.tree.command(name="wg_add_absent", description="Dodaj nieobecność")
+@bot.tree.command(name="wg_add_absent", description="Dodaj punkt nieobecności")
 async def wg_add_absent(interaction: discord.Interaction, swiat: str, nick: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
@@ -186,7 +217,7 @@ async def wg_add_absent(interaction: discord.Interaction, swiat: str, nick: str)
     conn.commit(); conn.close()
     await interaction.response.send_message(f"➕ Dodano nieobecność dla {nick}.")
 
-@bot.tree.command(name="wg_delete_absent", description="Usuń nieobecność")
+@bot.tree.command(name="wg_delete_absent", description="Usuń punkt nieobecności")
 async def wg_delete_absent(interaction: discord.Interaction, swiat: str, nick: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
@@ -194,7 +225,7 @@ async def wg_delete_absent(interaction: discord.Interaction, swiat: str, nick: s
     conn.commit(); conn.close()
     await interaction.response.send_message(f"➖ Usunięto nieobecność {nick}.")
 
-@bot.tree.command(name="wg_clear_all", description="Czyści wszystkie raporty")
+@bot.tree.command(name="wg_clear_all", description="Czyści wszystko")
 async def wg_clear_all(interaction: discord.Interaction):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
