@@ -112,9 +112,9 @@ async def wg_member_list(interaction: discord.Interaction, swiat: str):
 
     embed = discord.Embed(title=f"📜 Lista członków: {swiat.upper()}", color=discord.Color.blue())
     
-    embed.add_field(name="Kolumna 1", value="\n".join(col1) if col1 else "-", inline=True)
-    embed.add_field(name="Kolumna 2", value="\n".join(col2) if col2 else "-", inline=True)
-    embed.add_field(name="Kolumna 3", value="\n".join(col3) if col3 else "-", inline=True)
+    embed.add_field(name="*", value="\n".join(col1) if col1 else "-", inline=True)
+    embed.add_field(name="*", value="\n".join(col2) if col2 else "-", inline=True)
+    embed.add_field(name="*", value="\n".join(col3) if col3 else "-", inline=True)
     
     embed.set_footer(text=f"Łącznie członków: {len(wszyscy)}")
     
