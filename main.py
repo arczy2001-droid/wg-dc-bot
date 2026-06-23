@@ -91,14 +91,34 @@ async def wg_delete_member(interaction: discord.Interaction, swiat: str, nick: s
     conn.close()
     await interaction.response.send_message(f"🗑️ Usunięto gracza {nick}.")
 
-@bot.tree.command(name="wg_member_list", description="Wyświetla pełną listę członków gildii przypisanych dla wybranego świata.")
+@bot.tree.command(name="wg_member_list", description="Wyświetla listę członków gildii.")
 async def wg_member_list(interaction: discord.Interaction, swiat: str):
     conn = sqlite3.connect("gildia.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT nick FROM czlonkowie WHERE swiat = ?", (swiat.lower(),))
+    cursor.execute("SELECT nick FROM czlonkowie WHERE swiat = ? ORDER BY nick ASC", (swiat.lower(),))
     res = cursor.fetchall()
     conn.close()
-    await interaction.response.send_message(f"📜 Lista członków {swiat.upper()}: {', '.join([r[0] for r in res])}")
+
+    if not res:
+        await interaction.response.send_message("👻 Skład jest pusty.")
+        return
+
+    wszyscy = [r[0] for r in res]
+    
+    kolumna_size = (len(wszyscy) + 2) // 3
+    col1 = wszyscy[0:kolumna_size]
+    col2 = wszyscy[kolumna_size:kolumna_size*2]
+    col3 = wszyscy[kolumna_size*2:]
+
+    embed = discord.Embed(title=f"📜 Lista członków: {swiat.upper()}", color=discord.Color.blue())
+    
+    embed.add_field(name="Kolumna 1", value="\n".join(col1) if col1 else "-", inline=True)
+    embed.add_field(name="Kolumna 2", value="\n".join(col2) if col2 else "-", inline=True)
+    embed.add_field(name="Kolumna 3", value="\n".join(col3) if col3 else "-", inline=True)
+    
+    embed.set_footer(text=f"Łącznie członków: {len(wszyscy)}")
+    
+    await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="wg_absent_list", description="Wyświetla ranking nieobecności członków na danym świecie.")
 async def wg_absent_list(interaction: discord.Interaction, swiat: str):
