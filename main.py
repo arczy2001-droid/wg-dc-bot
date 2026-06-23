@@ -58,12 +58,12 @@ async def sprawdz_pozwolenie(interaction: discord.Interaction) -> bool:
     if res:
         kanal_id = int(res[0])
         if interaction.channel_id != kanal_id:
-            await interaction.response.send_message(f"❌ Tej komendy możesz używać tylko na kanale centrum operacyjnego: <#{kanal_id}>.", ephemeral=True)
+            await interaction.response.send_message(f"❌ Tej komendy możesz używać tylko na głównym kanale komend: <#{kanal_id}>.", ephemeral=True)
             return False
     return True
 
 # --- KOMENDY ---
-@bot.tree.command(name="wg_root", description="Konfiguruje kanał główny")
+@bot.tree.command(name="wg_root", description="Ustawia kanał główny")
 async def wg_root(interaction: discord.Interaction):
     conn = sqlite3.connect("gildia.db")
     conn.cursor().execute("INSERT OR REPLACE INTO ustawienia VALUES ('kanal_glowy', ?)", (str(interaction.channel_id),))
@@ -112,7 +112,7 @@ async def wg_delete_member(interaction: discord.Interaction, swiat: str, nick: s
     conn.commit(); conn.close()
     await interaction.response.send_message(f"🗑️ Usunięto {nick}.")
 
-@bot.tree.command(name="wg_member_list", description="Lista członków w 3 kolumnach")
+@bot.tree.command(name="wg_member_list", description="Lista członków")
 async def wg_member_list(interaction: discord.Interaction, swiat: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
@@ -137,7 +137,7 @@ async def wg_member_list(interaction: discord.Interaction, swiat: str):
     embed.set_footer(text=f"Łącznie członków: {len(res)}")
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="wg", description="Analizuje raport")
+@bot.tree.command(name="wg", description="Poczekaj..Ładuję...")
 async def wg(interaction: discord.Interaction, swiat: str, screen: discord.Attachment):
     if not await sprawdz_pozwolenie(interaction): return
     await interaction.response.defer()
@@ -169,7 +169,7 @@ async def wg_absent_list(interaction: discord.Interaction, swiat: str):
     txt = "\n".join([f"{r[0]}: {r[1]}x" for r in res])
     await interaction.response.send_message(f"📊 Ranking:\n{txt}")
 
-@bot.tree.command(name="wg_delete_raport", description="Usuwa ostatni raport świata")
+@bot.tree.command(name="wg_delete_raport", description="Usuwa ostatni raport na wybranym świecie")
 async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
@@ -178,7 +178,7 @@ async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
     conn.commit(); conn.close()
     await interaction.response.send_message("⏪ Cofnięto ostatni raport.")
 
-@bot.tree.command(name="wg_add_absent", description="Dodaj punkt nieobecności")
+@bot.tree.command(name="wg_add_absent", description="Dodaj nieobecność")
 async def wg_add_absent(interaction: discord.Interaction, swiat: str, nick: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
@@ -186,7 +186,7 @@ async def wg_add_absent(interaction: discord.Interaction, swiat: str, nick: str)
     conn.commit(); conn.close()
     await interaction.response.send_message(f"➕ Dodano nieobecność dla {nick}.")
 
-@bot.tree.command(name="wg_delete_absent", description="Usuń punkt nieobecności")
+@bot.tree.command(name="wg_delete_absent", description="Usuń nieobecność")
 async def wg_delete_absent(interaction: discord.Interaction, swiat: str, nick: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
@@ -194,7 +194,7 @@ async def wg_delete_absent(interaction: discord.Interaction, swiat: str, nick: s
     conn.commit(); conn.close()
     await interaction.response.send_message(f"➖ Usunięto nieobecność {nick}.")
 
-@bot.tree.command(name="wg_clear_all", description="Czyści wszystko")
+@bot.tree.command(name="wg_clear_all", description="Czyści wszystkie raporty")
 async def wg_clear_all(interaction: discord.Interaction):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
