@@ -50,6 +50,18 @@ class MyBot(commands.Bot):
 
 bot = MyBot()
 
+# --- STRAŻNIK KANAŁU ---
+async def sprawdz_pozwolenie(interaction: discord.Interaction) -> bool:
+    conn = sqlite3.connect("gildia.db")
+    res = conn.cursor().execute("SELECT wartosc FROM ustawienia WHERE klucz = 'kanal_glowy'").fetchone()
+    conn.close()
+    if res:
+        kanal_id = int(res[0])
+        if interaction.channel_id != kanal_id:
+            await interaction.response.send_message(f"❌ Tej komendy możesz używać tylko na kanale centrum operacyjnego: <#{kanal_id}>.", ephemeral=True)
+            return False
+    return True
+
 # --- KOMENDY ---
 @bot.tree.command(name="wg_root", description="Konfiguruje kanał główny")
 async def wg_root(interaction: discord.Interaction):
@@ -60,6 +72,7 @@ async def wg_root(interaction: discord.Interaction):
 
 @bot.tree.command(name="wg_add_world", description="Dodaje świat i przypisuje kanał")
 async def wg_add_world(interaction: discord.Interaction, nazwa: str, kanal: discord.TextChannel):
+    if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     conn.cursor().execute("INSERT OR REPLACE INTO swiaty VALUES (?, ?)", (nazwa.lower(), str(kanal.id)))
     conn.commit(); conn.close()
@@ -67,6 +80,7 @@ async def wg_add_world(interaction: discord.Interaction, nazwa: str, kanal: disc
 
 @bot.tree.command(name="wg_delete_world", description="Usuwa świat")
 async def wg_delete_world(interaction: discord.Interaction, nazwa: str):
+    if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     conn.cursor().execute("DELETE FROM swiaty WHERE nazwa = ?", (nazwa.lower(),))
     conn.commit(); conn.close()
@@ -74,6 +88,7 @@ async def wg_delete_world(interaction: discord.Interaction, nazwa: str):
 
 @bot.tree.command(name="wg_worlds", description="Wyświetla listę światów")
 async def wg_worlds(interaction: discord.Interaction):
+    if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     res = conn.cursor().execute("SELECT nazwa, kanal_id FROM swiaty").fetchall()
     conn.close()
@@ -82,6 +97,7 @@ async def wg_worlds(interaction: discord.Interaction):
 
 @bot.tree.command(name="wg_add_member", description="Dodaje graczy do świata")
 async def wg_add_member(interaction: discord.Interaction, swiat: str, lista: str):
+    if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     for n in [x.strip() for x in re.split(r'[\n,]+', lista)]:
         conn.cursor().execute("INSERT OR IGNORE INTO czlonkowie VALUES (?, ?)", (swiat.lower(), n))
@@ -90,6 +106,7 @@ async def wg_add_member(interaction: discord.Interaction, swiat: str, lista: str
 
 @bot.tree.command(name="wg_delete_member", description="Usuwa gracza")
 async def wg_delete_member(interaction: discord.Interaction, swiat: str, nick: str):
+    if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     conn.cursor().execute("DELETE FROM czlonkowie WHERE swiat=? AND nick=?", (swiat.lower(), nick))
     conn.commit(); conn.close()
@@ -97,6 +114,7 @@ async def wg_delete_member(interaction: discord.Interaction, swiat: str, nick: s
 
 @bot.tree.command(name="wg_member_list", description="Lista członków w 3 kolumnach")
 async def wg_member_list(interaction: discord.Interaction, swiat: str):
+    if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     cursor = conn.cursor()
     cursor.execute("SELECT nick FROM czlonkowie WHERE swiat = ? ORDER BY nick ASC", (swiat.lower(),))
@@ -121,6 +139,7 @@ async def wg_member_list(interaction: discord.Interaction, swiat: str):
 
 @bot.tree.command(name="wg", description="Analizuje raport")
 async def wg(interaction: discord.Interaction, swiat: str, screen: discord.Attachment):
+    if not await sprawdz_pozwolenie(interaction): return
     await interaction.response.defer()
     conn = sqlite3.connect("gildia.db")
     swiat_data = conn.cursor().execute("SELECT kanal_id FROM swiaty WHERE nazwa=?", (swiat.lower(),)).fetchone()
@@ -143,6 +162,7 @@ async def wg(interaction: discord.Interaction, swiat: str, screen: discord.Attac
 
 @bot.tree.command(name="wg_absent_list", description="Ranking nieobecności")
 async def wg_absent_list(interaction: discord.Interaction, swiat: str):
+    if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     res = conn.cursor().execute("SELECT nick, COUNT(*) FROM nieobecnosci WHERE swiat=? GROUP BY nick ORDER BY COUNT(*) DESC", (swiat.lower(),)).fetchall()
     conn.close()
@@ -151,6 +171,7 @@ async def wg_absent_list(interaction: discord.Interaction, swiat: str):
 
 @bot.tree.command(name="wg_delete_raport", description="Usuwa ostatni raport świata")
 async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
+    if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     data = conn.cursor().execute("SELECT MAX(data_wpisu) FROM nieobecnosci WHERE swiat=?", (swiat.lower(),)).fetchone()[0]
     conn.cursor().execute("DELETE FROM nieobecnosci WHERE data_wpisu=?", (data,))
@@ -159,6 +180,7 @@ async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
 
 @bot.tree.command(name="wg_add_absent", description="Dodaj punkt nieobecności")
 async def wg_add_absent(interaction: discord.Interaction, swiat: str, nick: str):
+    if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     conn.cursor().execute("INSERT INTO nieobecnosci VALUES (?, ?, ?)", (swiat.lower(), nick, datetime.now()))
     conn.commit(); conn.close()
@@ -166,6 +188,7 @@ async def wg_add_absent(interaction: discord.Interaction, swiat: str, nick: str)
 
 @bot.tree.command(name="wg_delete_absent", description="Usuń punkt nieobecności")
 async def wg_delete_absent(interaction: discord.Interaction, swiat: str, nick: str):
+    if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     conn.cursor().execute("DELETE FROM nieobecnosci WHERE rowid IN (SELECT rowid FROM nieobecnosci WHERE swiat=? AND nick=? ORDER BY data_wpisu DESC LIMIT 1)", (swiat.lower(), nick))
     conn.commit(); conn.close()
@@ -173,9 +196,15 @@ async def wg_delete_absent(interaction: discord.Interaction, swiat: str, nick: s
 
 @bot.tree.command(name="wg_clear_all", description="Czyści wszystko")
 async def wg_clear_all(interaction: discord.Interaction):
+    if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     conn.cursor().execute("DELETE FROM nieobecnosci")
     conn.commit(); conn.close()
     await interaction.response.send_message("💥 Baza nieobecności wyczyszczona.")
+
+@bot.event
+async def on_ready():
+    init_db()
+    print("Bot gotowy!")
 
 bot.run(TOKEN)
