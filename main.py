@@ -11,6 +11,7 @@ import difflib
 import pytesseract
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+OCR_API_KEY = "K88973838788957"
 
 # --- FUNKCJE POMOCNICZE OCR ---
 async def analizuj_screen_async(file_path):
