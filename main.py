@@ -3,6 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 import os
 import sqlite3
+import re
 from datetime import datetime
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
