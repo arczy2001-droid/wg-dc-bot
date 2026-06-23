@@ -31,7 +31,7 @@ bot = MyBot()
 
 # --- KOMENDY ---
 
-@bot.tree.command(name="wg_root", description="Konfiguruje kanał na którym będzie można używać komend.")
+@bot.tree.command(name="wg_root", description="Konfiguruje kanał dowodzenia")
 @app_commands.checks.has_permissions(administrator=True)
 async def wg_root(interaction: discord.Interaction):
     conn = sqlite3.connect("gildia.db")
@@ -53,7 +53,7 @@ async def wg_add_world(interaction: discord.Interaction, nazwa: str, kanal: disc
 
 @bot.tree.command(name="wg_delete_world", description="Usuwa świat.")
 @app_commands.checks.has_permissions(administrator=True)
-async def wg_del_world(interaction: discord.Interaction, nazwa: str):
+async def wg_delete_world(interaction: discord.Interaction, nazwa: str):
     conn = sqlite3.connect("gildia.db")
     cursor = conn.cursor()
     cursor.execute("DELETE FROM swiaty WHERE nazwa = ?", (nazwa.lower(),))
@@ -106,8 +106,8 @@ async def wg_add_absent(interaction: discord.Interaction, swiat: str, nick: str)
     conn.close()
     await interaction.response.send_message(f"➕ Dodano nieobecność dla {nick}.")
 
-@bot.tree.command(name="wg_del_absent", description="Usuń nieobecność")
-async def wg_del_absent(interaction: discord.Interaction, swiat: str, nick: str):
+@bot.tree.command(name="wg_delete_absent", description="Usuń nieobecność")
+async def wg_delete_absent(interaction: discord.Interaction, swiat: str, nick: str):
     conn = sqlite3.connect("gildia.db")
     cursor = conn.cursor()
     cursor.execute("DELETE FROM nieobecnosci WHERE rowid IN (SELECT rowid FROM nieobecnosci WHERE swiat = ? AND nick = ? ORDER BY data_wpisu DESC LIMIT 1)", (swiat.lower(), nick))
@@ -115,8 +115,8 @@ async def wg_del_absent(interaction: discord.Interaction, swiat: str, nick: str)
     conn.close()
     await interaction.response.send_message(f"➖ Usunięto nieobecność dla {nick}.")
 
-@bot.tree.command(name="wg_del_raport", description="Usuwa ostatni dodany raport dla wybranego świata.")
-async def wg_del_raport(interaction: discord.Interaction, swiat: str):
+@bot.tree.command(name="wg_delete_raport", description="Usuwa ostatni dodany raport dla wybranego świata.")
+async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
     conn = sqlite3.connect("gildia.db")
     cursor = conn.cursor()
     cursor.execute("SELECT MAX(data_wpisu) FROM nieobecnosci WHERE swiat = ?", (swiat.lower(),))
