@@ -61,14 +61,25 @@ async def wg_delete_world(interaction: discord.Interaction, nazwa: str):
     conn.close()
     await interaction.response.send_message(f"🗑️ Usunięto świat: {nazwa.upper()}")
 
-@bot.tree.command(name="wg_add_member", description="Dodaje gracza do świata.")
+@bot.tree.command(name="wg_add_member", description="Dodaje graczy (rozdziela spacjami, przecinkami lub nowymi liniami).")
 async def wg_add_member(interaction: discord.Interaction, swiat: str, nick: str):
+    lista_nickow = re.split(r'[\n,]+|\s{2,}', nick)
+    
+    czysta_lista = [n.strip() for n in lista_nickow if n.strip()]
+    
     conn = sqlite3.connect("gildia.db")
     cursor = conn.cursor()
-    cursor.execute("INSERT OR IGNORE INTO czlonkowie (swiat, nick) VALUES (?, ?)", (swiat.lower(), nick))
+    
+    dodani = 0
+    for n in czysta_lista:
+        cursor.execute("INSERT OR IGNORE INTO czlonkowie (swiat, nick) VALUES (?, ?)", (swiat.lower(), n))
+        if cursor.rowcount > 0:
+            dodani += 1
+            
     conn.commit()
     conn.close()
-    await interaction.response.send_message(f"✅ Dodano gracza {nick} do {swiat.upper()}.")
+    
+    await interaction.response.send_message(f"✅ Dodano {dodani} graczy do {swiat.upper()}.")
 
 @bot.tree.command(name="wg_delete_member", description="Usuwa konkretnego gracza ze składu danego świata.")
 async def wg_delete_member(interaction: discord.Interaction, swiat: str, nick: str):
