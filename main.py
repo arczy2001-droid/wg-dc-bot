@@ -95,12 +95,20 @@ async def wg_delete_member(interaction: discord.Interaction, swiat: str, nick: s
     conn.commit(); conn.close()
     await interaction.response.send_message(f"🗑️ Usunięto {nick}.")
 
-@bot.tree.command(name="wg_member_list", description="Lista członków świata")
+@bot.tree.command(name="wg_member_list", description="Wyświetla skład gildii")
 async def wg_member_list(interaction: discord.Interaction, swiat: str):
+    if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
-    res = [r[0] for r in conn.cursor().execute("SELECT nick FROM czlonkowie WHERE swiat=?", (swiat.lower(),)).fetchall()]
+    res = [r[0] for r in conn.cursor().execute("SELECT nick FROM czlonkowie WHERE swiat = ? ORDER BY nick ASC", (swiat.lower(),)).fetchall()]
     conn.close()
-    await interaction.response.send_message(f"📜 Skład ({swiat}):\n{', '.join(res)}")
+    if not res: await interaction.response.send_message("👻 Skład jest pusty."); return
+    
+    size = (len(res) + 2) // 3
+    embed = discord.Embed(title=f"📜 Skład: {swiat.upper()}", color=discord.Color.blue())
+    embed.add_field(name="I", value="\n".join(res[0:size]) or "-", inline=True)
+    embed.add_field(name="II", value="\n".join(res[size:size*2]) or "-", inline=True)
+    embed.add_field(name="III", value="\n".join(res[size*2:]) or "-", inline=True)
+    await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="wg", description="Analizuje raport")
 async def wg(interaction: discord.Interaction, swiat: str, screen: discord.Attachment):
