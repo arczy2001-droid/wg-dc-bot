@@ -95,7 +95,7 @@ async def wg_delete_member(interaction: discord.Interaction, swiat: str, nick: s
     conn.commit(); conn.close()
     await interaction.response.send_message(f"🗑️ Usunięto {nick}.")
 
-@bot.tree.command(name="wg_member_list", description="Wyświetla skład gildii w 3 kolumnach")
+@bot.tree.command(name="wg_member_list", description="Lista członków w 3 kolumnach")
 async def wg_member_list(interaction: discord.Interaction, swiat: str):
     conn = sqlite3.connect("gildia.db")
     cursor = conn.cursor()
@@ -103,16 +103,20 @@ async def wg_member_list(interaction: discord.Interaction, swiat: str):
     res = [r[0] for r in cursor.fetchall()]
     conn.close()
     
-    if not res: await interaction.response.send_message("👻 Skład jest pusty."); return
+    if not res: 
+        await interaction.response.send_message("👻 Skład jest pusty."); return
     
+    # Podział na 3 kolumny
     size = (len(res) + 2) // 3
-    c1, c2, c3 = res[0:size], res[size:size*2], res[size*2:]
+    c1 = res[0:size]
+    c2 = res[size:size*2]
+    c3 = res[size*2:]
     
     embed = discord.Embed(title=f"📜 Skład: {swiat.upper()}", color=discord.Color.blue())
     embed.add_field(name="I", value="\n".join(c1) or "-", inline=True)
     embed.add_field(name="II", value="\n".join(c2) or "-", inline=True)
     embed.add_field(name="III", value="\n".join(c3) or "-", inline=True)
-    embed.set_footer(text=f"Łącznie: {len(res)}")
+    embed.set_footer(text=f"Łącznie członków: {len(res)}")
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="wg", description="Analizuje raport")
