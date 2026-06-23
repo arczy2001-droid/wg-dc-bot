@@ -28,13 +28,21 @@ async def analizuj_screen_async(file_path):
 
 def dopasuj_nick(ocr_nick, sklad_gildii):
     clean_ocr = re.sub(r'[^a-zA-Z0-9 ]', '', ocr_nick)
-    clean_ocr = re.sub(r'\(.*?\)', '', clean_ocr)
-    words = [w for w in clean_ocr.split() if len(w) > 2]
-    if not words: return None
-    candidate = max(words, key=len)
+    clean_ocr = re.sub(r'\(.*?\)', '', clean_ocr).strip()
     
-    matches = difflib.get_close_matches(candidate, sklad_gildii, n=1, cutoff=0.25)
-    return matches[0] if matches else None
+    if len(clean_ocr) < 3: 
+        return None
+        
+    matches = difflib.get_close_matches(clean_ocr, sklad_gildii, n=1, cutoff=0.6)
+    
+    if matches:
+        return matches[0]
+    
+    for member in sklad_gildii:
+        if member.lower() in clean_ocr.lower():
+            return member
+            
+    return None
 
 # --- BAZA DANYCH ---
 def init_db():
