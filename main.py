@@ -79,11 +79,15 @@ async def wg_raport(interaction: discord.Interaction, swiat: str, screen: discor
     nieobecni = []
     w_sekcji = False
     
-    for line in lines:
+for line in lines:
         if "Niezarejestrowani" in line: w_sekcji = True; continue
-        if "Zarejestrowani" in line or "Obrona" in line: w_sekcji = False; break
+        if "Zarejestrowani" in line or "Obrona" in line or "Atak" in line: w_sekcji = False; break
+        
         if w_sekcji and len(line.strip()) > 3:
+            print(f"DEBUG: Sprawdzam linię z OCR: '{line}'")
             nick = dopasuj_nick(line, sklad)
+            print(f"DEBUG: Wynik dopasowania dla tej linii: '{nick}'")
+            
             if nick and nick not in nieobecni: 
                 nieobecni.append(nick)
                 cursor.execute("INSERT INTO nieobecnosci (swiat, nick, data_wpisu) VALUES (?, ?, ?)", 
