@@ -19,7 +19,6 @@ async def analizuj_screen_async(file_path):
         img = img.resize((img.width * 2, img.height * 2), Image.Resampling.LANCZOS)
         img = img.convert('L').filter(ImageFilter.SHARPEN)
         img = ImageEnhance.Contrast(img).enhance(2.0)
-        
         text = pytesseract.image_to_string(img, lang='pol')
         return text.splitlines()
     except Exception as e:
@@ -29,19 +28,11 @@ async def analizuj_screen_async(file_path):
 def dopasuj_nick(ocr_nick, sklad_gildii):
     clean_ocr = re.sub(r'[^a-zA-Z0-9 ]', '', ocr_nick)
     clean_ocr = re.sub(r'\(.*?\)', '', clean_ocr).strip()
-    
-    if len(clean_ocr) < 3: 
-        return None
-        
+    if len(clean_ocr) < 3: return None
     matches = difflib.get_close_matches(clean_ocr, sklad_gildii, n=1, cutoff=0.6)
-    
-    if matches:
-        return matches[0]
-    
+    if matches: return matches[0]
     for member in sklad_gildii:
-        if member.lower() in clean_ocr.lower():
-            return member
-            
+        if member.lower() in clean_ocr.lower(): return member
     return None
 
 # --- BAZA DANYCH ---
@@ -49,7 +40,6 @@ def init_db():
     conn = sqlite3.connect("gildia.db")
     cursor = conn.cursor()
     cursor.execute("CREATE TABLE IF NOT EXISTS nieobecnosci (swiat TEXT, nick TEXT, data_wpisu TIMESTAMP)")
-    cursor.execute("CREATE TABLE IF NOT EXISTS swiaty (nazwa TEXT PRIMARY KEY, kanal_id INTEGER)")
     cursor.execute("CREATE TABLE IF NOT EXISTS czlonkowie (swiat TEXT, nick TEXT, PRIMARY KEY(swiat, nick))")
     conn.commit()
     conn.close()
@@ -63,40 +53,30 @@ class MyBot(commands.Bot):
 bot = MyBot()
 
 # --- KOMENDY ---
-
 @bot.tree.command(name="wg", description="Analizuje screenshot raportu")
 async def wg_raport(interaction: discord.Interaction, swiat: str, screen: discord.Attachment):
     await interaction.response.defer()
     file_path = f"temp_{screen.filename}"
     await screen.save(file_path)
-    
     conn = sqlite3.connect("gildia.db")
     cursor = conn.cursor()
     cursor.execute("SELECT nick FROM czlonkowie WHERE swiat = ?", (swiat.lower(),))
     sklad = [r[0] for r in cursor.fetchall()]
-    
     lines = await analizuj_screen_async(file_path)
     nieobecni = []
     w_sekcji = False
-    
-for line in lines:
+    for line in lines:
         if "Niezarejestrowani" in line: w_sekcji = True; continue
-        if "Zarejestrowani" in line or "Obrona" in line or "Atak" in line: w_sekcji = False; break
-        
+        if "Zarejestrowani" in line or "Obrona" in line: w_sekcji = False; break
         if w_sekcji and len(line.strip()) > 3:
-            print(f"DEBUG: Sprawdzam linię z OCR: '{line}'")
             nick = dopasuj_nick(line, sklad)
-            print(f"DEBUG: Wynik dopasowania dla tej linii: '{nick}'")
-            
             if nick and nick not in nieobecni: 
                 nieobecni.append(nick)
                 cursor.execute("INSERT INTO nieobecnosci (swiat, nick, data_wpisu) VALUES (?, ?, ?)", 
                                (swiat.lower(), nick, datetime.now()))
-    
     conn.commit()
     conn.close()
     if os.path.exists(file_path): os.remove(file_path)
-    
     msg = f"🚨 Nieobecni ({swiat.upper()}): {', '.join(nieobecni)}" if nieobecni else f"✅ Raport {swiat.upper()} ok, brak nieobecnych."
     await interaction.followup.send(msg)
 
@@ -105,15 +85,13 @@ async def wg_add_member(interaction: discord.Interaction, swiat: str, nick: str)
     lista = [n.strip() for n in re.split(r'[\n,]+|\s{2,}', nick) if n.strip()]
     conn = sqlite3.connect("gildia.db")
     cursor = conn.cursor()
-    dodani = 0
     for n in lista:
         cursor.execute("INSERT OR IGNORE INTO czlonkowie (swiat, nick) VALUES (?, ?)", (swiat.lower(), n))
-        if cursor.rowcount > 0: dodani += 1
     conn.commit()
     conn.close()
-    await interaction.response.send_message(f"✅ Dodano {dodani} graczy.")
+    await interaction.response.send_message(f"✅ Dodano graczy.")
 
-@bot.tree.command(name="wg_member_list", description="Lista członków w 3 kolumnach")
+@bot.tree.command(name="wg_member_list", description="Lista członków")
 async def wg_member_list(interaction: discord.Interaction, swiat: str):
     conn = sqlite3.connect("gildia.db")
     cursor = conn.cursor()
@@ -121,40 +99,13 @@ async def wg_member_list(interaction: discord.Interaction, swiat: str):
     res = [r[0] for r in cursor.fetchall()]
     conn.close()
     if not res: await interaction.response.send_message("👻 Pusto."); return
-    
     size = (len(res) + 2) // 3
     c1, c2, c3 = res[0:size], res[size:size*2], res[size*2:]
-    
     embed = discord.Embed(title=f"📜 Skład: {swiat.upper()}", color=discord.Color.blue())
     embed.add_field(name="I", value="\n".join(c1) or "-", inline=True)
     embed.add_field(name="II", value="\n".join(c2) or "-", inline=True)
     embed.add_field(name="III", value="\n".join(c3) or "-", inline=True)
-    embed.set_footer(text=f"Łącznie: {len(res)}")
     await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="wg_absent_list", description="Ranking nieobecności")
-async def wg_absent_list(interaction: discord.Interaction, swiat: str):
-    conn = sqlite3.connect("gildia.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT nick, COUNT(*) FROM nieobecnosci WHERE swiat = ? GROUP BY nick", (swiat.lower(),))
-    res = cursor.fetchall()
-    conn.close()
-    txt = "\n".join([f"{r[0]}: {r[1]}x" for r in res]) if res else "Brak nieobecności."
-    await interaction.response.send_message(f"📊 Nieobecności:\n```{txt}```")
-
-@bot.tree.command(name="wg_delete_raport", description="Cofnij ostatni raport")
-async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
-    conn = sqlite3.connect("gildia.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT MAX(data_wpisu) FROM nieobecnosci WHERE swiat = ?", (swiat.lower(),))
-    data = cursor.fetchone()[0]
-    if data:
-        cursor.execute("DELETE FROM nieobecnosci WHERE data_wpisu = ?", (data,))
-        conn.commit()
-        await interaction.response.send_message("⏪ Cofnięto raport.")
-    else:
-        await interaction.response.send_message("❌ Brak raportów.")
-    conn.close()
 
 @bot.event
 async def on_ready():
