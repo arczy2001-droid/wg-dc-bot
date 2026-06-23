@@ -29,11 +29,19 @@ async def analizuj_screen_async(file_path):
         return []
 
 def dopasuj_nick(ocr_nick, sklad_gildii):
-    # Usuwanie artefaktów OCR, np. nawiasów z poziomem
+
     clean_ocr = re.sub(r'\(.*?\)', '', ocr_nick).strip()
-    clean_ocr = re.sub(r'[^a-zA-Z0-9]', '', clean_ocr) # Tylko litery/cyfry
     
-    matches = difflib.get_close_matches(clean_ocr, sklad_gildii, n=1, cutoff=0.5)
+    normalized = clean_ocr.replace('1', 'l').replace('0', 'o').replace('!', 'i')
+    
+    matches = difflib.get_close_matches(normalized, sklad_gildii, n=1, cutoff=0.3)
+    
+    # Opcjonalny DEBUG (pomoże Ci zobaczyć w konsoli, co bot myśli)
+    if matches:
+        print(f"DEBUG: OCR '{ocr_nick}' -> znormalizowano na '{normalized}' -> dopasowano do '{matches[0]}'")
+    else:
+        print(f"DEBUG: Nie udało się dopasować: '{normalized}'")
+        
     return matches[0] if matches else None
 
 # --- BAZA DANYCH ---
