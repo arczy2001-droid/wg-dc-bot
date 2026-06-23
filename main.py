@@ -14,12 +14,21 @@ TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
 # --- FUNKCJE POMOCNICZE OCR ---
 async def analizuj_screen_async(file_path):
+    """Przetwarza obraz i zwraca listę linii tekstu."""
     try:
         img = Image.open(file_path)
+        
+        # 1. Powiększenie 2x
         img = img.resize((img.width * 2, img.height * 2), Image.Resampling.LANCZOS)
-        img = img.convert('L').filter(ImageFilter.SHARPEN)
-        img = ImageEnhance.Contrast(img).enhance(2.0)
-        text = pytesseract.image_to_string(img, lang='pol')
+        
+        # 2. Skala szarości i ekstremalne podbicie kontrastu
+        img = img.convert('L')
+        img = ImageEnhance.Contrast(img).enhance(3.0)
+        
+        # KLUCZOWA ZMIANA: config='--psm 6'
+        # Tryb 6 oznacza: "Assume a single uniform block of text" (zakładaj jeden blok tekstu)
+        text = pytesseract.image_to_string(img, lang='pol', config='--psm 6')
+        
         return text.splitlines()
     except Exception as e:
         print(f"BŁĄD OCR: {e}")
