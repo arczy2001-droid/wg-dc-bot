@@ -204,7 +204,6 @@ async def wg(interaction: discord.Interaction, swiat: str, screen: discord.Attac
 @bot.tree.command(name="wg_absent_list", description="Ranking nieobecności")
 async def wg_absent_list(interaction: discord.Interaction, swiat: str):
     if not await sprawdz_pozwolenie(interaction): return
-    # Dodajemy defer(), aby Discord nie zrywał połączenia po 3 sekundach lagów na bazie danych
     await interaction.response.defer()
     
     conn = sqlite3.connect("gildia.db")
@@ -213,9 +212,8 @@ async def wg_absent_list(interaction: discord.Interaction, swiat: str):
     conn.close()
     
     txt = "\n".join([f"{r[0]}: {r[1]}x" for r in res]) if res else "Brak nieobecności."
-    naglowek = f"📊 **Ranking z świata {swiat.upper()} na bazie raportów: ({liczba_raportow}):**"
+    naglowek = f"📊 **Ranking ze świata {swiat.upper()} na bazie raportów: {liczba_raportow}:**"
     
-    # Odpowiadamy przez followup, ponieważ użyliśmy defer()
     await interaction.followup.send(f"{naglowek}\n{txt}")
 
 @bot.tree.command(name="wg_delete_raport", description="Usuwa ostatni raport z wybranego świata")
@@ -229,7 +227,7 @@ async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
         conn.cursor().execute("DELETE FROM nieobecnosci WHERE swiat=? AND data_wpisu=?", (swiat.lower(), ostatnia_data))
         conn.cursor().execute("DELETE FROM raporty WHERE swiat=? AND data_wpisu=?", (swiat.lower(), ostatnia_data))
         conn.commit()
-        await interaction.response.send_message("⏪ Cofnięto ostatni raport (i zaktualizowano licznik).")
+        await interaction.response.send_message("⏪ Cofnięto ostatni raport.")
     else:
         await interaction.response.send_message("❌ Nie znaleziono żadnych raportów dla tego świata.")
     conn.close()
