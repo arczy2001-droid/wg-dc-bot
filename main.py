@@ -39,7 +39,10 @@ async def analizuj_screen(file_path):
 class MyBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=discord.Intents.all())
+        
     async def setup_hook(self):
+        # Odpalamy inicjalizację bazy TUTAJ, zanim ruszą zadania w tle
+        init_db()
         self.czyszczenie.start()
         self.niedzielny_ranking.start()
         await self.tree.sync()
@@ -219,7 +222,6 @@ async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
     
     if res and res[0]:
         ostatnia_data = res[0]
-        # Usuwamy wpisy nieobecności oraz sam wpis raportu z licznika
         conn.cursor().execute("DELETE FROM nieobecnosci WHERE swiat=? AND data_wpisu=?", (swiat.lower(), ostatnia_data))
         conn.cursor().execute("DELETE FROM raporty WHERE swiat=? AND data_wpisu=?", (swiat.lower(), ostatnia_data))
         conn.commit()
@@ -255,7 +257,6 @@ async def wg_clear_all(interaction: discord.Interaction):
 
 @bot.event
 async def on_ready():
-    init_db()
     print("Bot gotowy!")
 
 bot.run(TOKEN)
