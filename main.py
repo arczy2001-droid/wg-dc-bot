@@ -6,6 +6,7 @@ import sqlite3
 import re
 from datetime import datetime, timedelta
 import asyncio
+from playwright.async_api import async_playwright
 import difflib
 import aiohttp
 
@@ -256,7 +257,45 @@ async def wg_clear_all(interaction: discord.Interaction):
     conn.cursor().execute("DELETE FROM raporty")
     conn.commit(); conn.close()
     await interaction.response.send_message("💥 Baza nieobecności oraz licznik raportów wyczyszczone.")
+    
+@tree.command(name="test_scrapera", description="Test połączenia bota z SFDataHub")
+async def test_scrapera(interaction: discord.Interaction):
+    # Poinformuj Discorda, że operacja chwilę zajmie
+    await interaction.response.defer()
 
+    try:
+        async with async_playwright() as p:
+            # Uruchamiamy przeglądarkę w trybie cichym (headless)
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+
+            url = "https://sfdatahub.com/#/toplists"
+            await page.goto(url)
+
+            # Czekamy 4 sekundy, aż skrypty strony pobiorą dane z Firebase
+            await page.wait_for_timeout(4000)
+
+            tytul = await page.title()
+            
+            # Wyciągamy cały tekst widoczny w body strony
+            surowy_tekst = await page.locator("body").inner_text()
+            
+            # Ucinamy do 600 znaków, żeby nie przekroczyć limitu wiadomości Discorda (2000 zn.)
+            podglad_tekstu = surowy_tekst[:600]
+
+            await browser.close()
+
+            odpowiedz = (
+                f"✅ **Połączenie nawiązane!**\n\n"
+                f"**Tytuł karty:** `{tytul}`\n"
+                f"**Co bot widzi na stronie (fragment):**\n"
+                f"```text\n{podglad_tekstu}\n```"
+            )
+            await interaction.followup.send(odpowiedz)
+
+    except Exception as e:
+        await interaction.followup.send(f"❌ **Wystąpił błąd podczas skanowania:**\n`{e}`")
+        
 @bot.event
 async def on_ready():
     print("Bot gotowy!")
