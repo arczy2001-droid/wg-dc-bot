@@ -13,7 +13,7 @@ import aiohttp
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 OCR_API_KEY = os.getenv("OCR_SPACE_API_KEY")
 
-# --- BAZA DANYCH ---
+#    BAZA DANYCH 
 def init_db():
     conn = sqlite3.connect("gildia.db")
     c = conn.cursor()
@@ -21,10 +21,10 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS ustawienia (klucz TEXT PRIMARY KEY, wartosc TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS czlonkowie (swiat TEXT, nick TEXT, PRIMARY KEY(swiat, nick))")
     c.execute("CREATE TABLE IF NOT EXISTS swiaty (nazwa TEXT PRIMARY KEY, kanal_id TEXT)")
-    c.execute("CREATE TABLE IF NOT EXISTS raporty (swiat TEXT, data_wpisu TIMESTAMP)")  # Nowa tabela licznika raportów
+    c.execute("CREATE TABLE IF NOT EXISTS raporty (swiat TEXT, data_wpisu TIMESTAMP)")
     conn.commit(); conn.close()
 
-# --- OCR ---
+#    OCR 
 async def analizuj_screen(file_path):
     url = 'https://api.ocr.space/parse/image'
     try:
@@ -36,7 +36,7 @@ async def analizuj_screen(file_path):
                     return res['ParsedResults'][0]['ParsedText'].splitlines()
     except: return []
 
-# --- BOT ---
+#    BOT
 class MyBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=discord.Intents.all())
@@ -77,7 +77,7 @@ class MyBot(commands.Bot):
 
 bot = MyBot()
 
-# --- STRAŻNIK KANAŁU ---
+#    Główny kanał
 async def sprawdz_pozwolenie(interaction: discord.Interaction) -> bool:
     conn = sqlite3.connect("gildia.db")
     res = conn.cursor().execute("SELECT wartosc FROM ustawienia WHERE klucz = 'kanal_glowy'").fetchone()
@@ -89,7 +89,7 @@ async def sprawdz_pozwolenie(interaction: discord.Interaction) -> bool:
             return False
     return True
 
-# --- KOMENDY ---
+#    Komendy
 @bot.tree.command(name="wg_root", description="Konfiguruje kanał główny")
 async def wg_root(interaction: discord.Interaction):
     conn = sqlite3.connect("gildia.db")
@@ -260,27 +260,17 @@ async def wg_clear_all(interaction: discord.Interaction):
     
 @bot.tree.command(name="test_scrapera", description="Test połączenia bota z SFDataHub")
 async def test_scrapera(interaction: discord.Interaction):
-    # Poinformuj Discorda, że operacja chwilę zajmie
     await interaction.response.defer()
 
     try:
         async with async_playwright() as p:
-            # Uruchamiamy przeglądarkę w trybie cichym (headless)
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
-
             url = "https://sfdatahub.com/#/toplists"
             await page.goto(url)
-
-            # Czekamy 4 sekundy, aż skrypty strony pobiorą dane z Firebase
             await page.wait_for_timeout(4000)
-
             tytul = await page.title()
-            
-            # Wyciągamy cały tekst widoczny w body strony
             surowy_tekst = await page.locator("body").inner_text()
-            
-            # Ucinamy do 600 znaków, żeby nie przekroczyć limitu wiadomości Discorda (2000 zn.)
             podglad_tekstu = surowy_tekst[:600]
 
             await browser.close()
