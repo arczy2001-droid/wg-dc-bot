@@ -258,7 +258,7 @@ async def wg_clear_all(interaction: discord.Interaction):
     conn.commit(); conn.close()
     await interaction.response.send_message("💥 Baza nieobecności oraz licznik raportów wyczyszczone.")
     
-@tree.command(name="test_scrapera", description="Test połączenia bota z SFDataHub")
+@bot.tree.command(name="test_scrapera", description="Test połączenia bota z SFDataHub")
 async def test_scrapera(interaction: discord.Interaction):
     # Poinformuj Discorda, że operacja chwilę zajmie
     await interaction.response.defer()
