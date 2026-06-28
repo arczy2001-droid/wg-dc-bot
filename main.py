@@ -368,9 +368,9 @@ async def on_message_delete(message: discord.Message):
             if kanal_logow:
                 embed = discord.Embed(title="🗑️ Deleted message", color=discord.Color.orange())
                 embed.set_author(name=f"{message.author.display_name} ({message.author.id})", icon_url=message.author.display_avatar.url)
-                embed.add_field(name="Kanał", value=message.channel.mention, inline=True)
+                embed.add_field(name="Channel", value=message.channel.mention, inline=True)
                 tresc = message.content if message.content else "*[No text]*"
-                embed.add_field(name="Treść", value=tresc[:1000], inline=False)
+                embed.add_field(name="Message", value=tresc[:1000], inline=False)
                 await kanal_logow.send(embed=embed)
         except Exception as e:
             print(f"Error logging deleted message: {e}")
