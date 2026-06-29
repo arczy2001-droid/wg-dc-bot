@@ -11,15 +11,18 @@ import difflib
 import aiohttp
 from urllib.parse import urlparse
 
+from setup_wizard import setup as setup_command, setup_reset as setup_reset_command, init_setup_table
+
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 OCR_API_KEY = os.getenv("OCR_SPACE_API_KEY")
 
 #    BAZA DANYCH (każda tabela jest teraz scoped per-guild via guild_id)
+#    Uwaga: tabela 'ustawienia' (kanal_glowy / kanal_logow) zostala zastapiona
+#    przez 'guild_config' z setup_wizard.py — nie tworzymy jej tu juz dla nowych instalacji.
 def init_db():
     conn = sqlite3.connect("gildia.db")
     c = conn.cursor()
     c.execute("CREATE TABLE IF NOT EXISTS nieobecnosci (guild_id TEXT, swiat TEXT, nick TEXT, data_wpisu TIMESTAMP)")
-    c.execute("CREATE TABLE IF NOT EXISTS ustawienia (guild_id TEXT, klucz TEXT, wartosc TEXT, PRIMARY KEY (guild_id, klucz))")
     c.execute("CREATE TABLE IF NOT EXISTS czlonkowie (guild_id TEXT, swiat TEXT, nick TEXT, PRIMARY KEY (guild_id, swiat, nick))")
     c.execute("CREATE TABLE IF NOT EXISTS swiaty (guild_id TEXT, nazwa TEXT, kanal_id TEXT, PRIMARY KEY (guild_id, nazwa))")
     c.execute("CREATE TABLE IF NOT EXISTS raporty (guild_id TEXT, swiat TEXT, data_wpisu TIMESTAMP)")
@@ -72,13 +75,13 @@ def policz_wskazniki_scamu(tekst: str) -> int:
     return sum(1 for kw in SCAM_KEYWORDS if kw in tekst)
 
 async def wyslij_log(guild_id: str, tytul: str, kolor: discord.Color, autor: discord.abc.User, pola: list):
-    """Wspólna funkcja do logowania (phishing / scam image / deleted message). Czyta kanal_logow scoped per guild."""
+    """Wspólna funkcja do logowania (phishing / scam image / deleted message). Czyta logs_channel z guild_config."""
     conn = sqlite3.connect("gildia.db")
     res = conn.cursor().execute(
-        "SELECT wartosc FROM ustawienia WHERE guild_id=? AND klucz='kanal_logow'", (guild_id,)
+        "SELECT logs_channel FROM guild_config WHERE guild_id=?", (guild_id,)
     ).fetchone()
     conn.close()
-    if not res:
+    if not res or not res[0]:
         return
     try:
         kanal_logow = bot.get_channel(int(res[0]))
@@ -99,6 +102,9 @@ class MyBot(commands.Bot):
 
     async def setup_hook(self):
         init_db()
+        init_setup_table()
+        self.tree.add_command(setup_command)
+        self.tree.add_command(setup_reset_command)
         self.czyszczenie.start()
         self.niedzielny_ranking.start()
         await self.tree.sync()
@@ -156,18 +162,18 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     except Exception:
         pass
 
-#    Sprawdzenie głównego kanału (scoped per guild)
+#    Sprawdzenie głównego kanału (scoped per guild, ustawione przez /setup)
 async def sprawdz_pozwolenie(interaction: discord.Interaction) -> bool:
     if not interaction.guild_id:
         await interaction.response.send_message("❌ This command can only be used inside a server.", ephemeral=True)
         return False
     conn = sqlite3.connect("gildia.db")
     res = conn.cursor().execute(
-        "SELECT wartosc FROM ustawienia WHERE guild_id=? AND klucz='kanal_glowy'",
+        "SELECT main_channel FROM guild_config WHERE guild_id=?",
         (str(interaction.guild_id),)
     ).fetchone()
     conn.close()
-    if res:
+    if res and res[0]:
         kanal_id = int(res[0])
         if interaction.channel_id != kanal_id:
             await interaction.response.send_message(f"❌ Commands can only be entered on the main channel for commands: <#{kanal_id}>.", ephemeral=True)
@@ -175,34 +181,6 @@ async def sprawdz_pozwolenie(interaction: discord.Interaction) -> bool:
     return True
 
 #    Komendy
-@bot.tree.command(name="wg_root", description="Choose channel for commands only")
-@app_commands.checks.has_permissions(manage_guild=True)
-async def wg_root(interaction: discord.Interaction):
-    if not interaction.guild_id:
-        await interaction.response.send_message("❌ This command can only be used inside a server.", ephemeral=True)
-        return
-    conn = sqlite3.connect("gildia.db")
-    conn.cursor().execute(
-        "INSERT OR REPLACE INTO ustawienia VALUES (?, 'kanal_glowy', ?)",
-        (str(interaction.guild_id), str(interaction.channel_id))
-    )
-    conn.commit(); conn.close()
-    await interaction.response.send_message("✅ Main channel set for this server.")
-
-@bot.tree.command(name="wg_set_logs", description="Sets the channel for log notifications (antiphising and deleted messages)")
-@app_commands.checks.has_permissions(manage_guild=True)
-async def wg_set_logs(interaction: discord.Interaction, kanal: discord.TextChannel):
-    if not await sprawdz_pozwolenie(interaction): return
-    conn = sqlite3.connect("gildia.db")
-    conn.cursor().execute(
-        "INSERT OR REPLACE INTO ustawienia VALUES (?, 'kanal_logow', ?)",
-        (str(interaction.guild_id), str(kanal.id))
-    )
-    conn.commit()
-    conn.close()
-    await interaction.response.send_message(f"✅ From now on, logs and notifications about blocked viruses will be sent to: <#{kanal.id}>.")
-
-@bot.tree.command(name="wg_add_world", description="Add world and assign a channel")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def wg_add_world(interaction: discord.Interaction, nazwa: str, kanal: discord.TextChannel):
     if not await sprawdz_pozwolenie(interaction): return
