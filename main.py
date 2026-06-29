@@ -39,6 +39,58 @@ async def analizuj_screen(file_path):
         print(f"Error during OCR analysis: {e}")
         return []
 
+#    FISHFISH (sprawdzanie domen)
+async def is_malicious_domain(domena, session):
+    """Returns True only if FishFish has this domain catalogued as
+    malware/phishing. NOTE: GET /domains/:domain returns HTTP 200 for ANY
+    catalogued domain (including ones marked 'safe') and 404 only if the
+    domain was never catalogued at all — so checking status code alone
+    is not enough, we must read the 'category' field."""
+    url_api = f"https://api.fishfish.gg/v1/domains/{domena}"
+    try:
+        async with session.get(url_api, timeout=aiohttp.ClientTimeout(total=5)) as response:
+            if response.status == 200:
+                data = await response.json()
+                return data.get("category") in ("malware", "phishing")
+            return False
+    except Exception as e:
+        print(f"Error checking domain {domena} on FishFish: {e}")
+        return False
+
+#    WYKRYWANIE SCAMÓW NA OBRAZKACH (np. fałszywe kasyna crypto / giveaway)
+SCAM_KEYWORDS = [
+    "withdrawal success", "activate code for bonus", "crypto casino",
+    "deposit bonus", "rakeback", "claim your bonus", "airdrop claim",
+    "free nitro", "discord nitro free", "steam gift", "giveaway winner",
+    "selected as a winner", "claim now", "limited offer", "exclusive bonus",
+    "trc20", "bep20", "erc20", "withdraw your winnings", "enter the promo code",
+    "select a withdraw method", "select crypto to withdraw",
+]
+
+def policz_wskazniki_scamu(tekst: str) -> int:
+    tekst = tekst.lower()
+    return sum(1 for kw in SCAM_KEYWORDS if kw in tekst)
+
+async def wyslij_log(tytul: str, kolor: discord.Color, autor: discord.abc.User,
+                      kanal: discord.abc.GuildChannel, pola: list):
+    """Wspólna funkcja do logowania (phishing / scam image / deleted message)."""
+    conn = sqlite3.connect("gildia.db")
+    res = conn.cursor().execute("SELECT wartosc FROM ustawienia WHERE klucz = 'kanal_logow'").fetchone()
+    conn.close()
+    if not res:
+        return
+    try:
+        kanal_logow = bot.get_channel(int(res[0]))
+        if not kanal_logow:
+            return
+        embed = discord.Embed(title=tytul, color=kolor)
+        embed.set_author(name=f"{autor.display_name} ({autor.id})", icon_url=autor.display_avatar.url)
+        for nazwa, wartosc, inline in pola:
+            embed.add_field(name=nazwa, value=wartosc, inline=inline)
+        await kanal_logow.send(embed=embed)
+    except Exception as e:
+        print(f"Error sending log embed: {e}")
+
 #    BOT
 class MyBot(commands.Bot):
     def __init__(self):
@@ -310,45 +362,79 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    # Logika sprawdzania linków
+    # --- 1) Sprawdzanie linków przeciw bazie FishFish (malware/phishing) ---
     znalezione_linki = re.findall(r'(https?://[^\s]+)', message.content)
-    for link in znalezione_linki:
-        domena = urlparse(link).netloc
-        if not domena:
+    if znalezione_linki:
+        async with aiohttp.ClientSession() as session:
+            for link in znalezione_linki:
+                domena = urlparse(link).netloc
+                if not domena:
+                    continue
+
+                if await is_malicious_domain(domena, session):
+                    try:
+                        await message.delete()
+                    except discord.NotFound:
+                        pass
+
+                    await message.channel.send(
+                        f"🛡️ **A dangerous link has been blocked!** {message.author.mention} tried to send a SCAM.",
+                        delete_after=10
+                    )
+                    await wyslij_log(
+                        "🚨 A phishing attempt has been blocked",
+                        discord.Color.red(),
+                        message.author,
+                        message.channel,
+                        [
+                            ("Kanał", message.channel.mention, True),
+                            ("Domena", f"`{domena}`", True),
+                            ("Treść", message.content[:1000] if message.content else "*[No text]*", False),
+                        ]
+                    )
+                    await bot.process_commands(message)
+                    return  # message already deleted, nothing more to scan
+
+    # --- 2) Sprawdzanie obrazków pod kątem scamów (fałszywe kasyna/giveawaye) ---
+    for att in message.attachments:
+        if not (att.content_type and att.content_type.startswith("image/")):
             continue
 
+        safe_name = re.sub(r'[^A-Za-z0-9._-]', '_', os.path.basename(att.filename))
+        tmp_path = f"scamcheck_{message.id}_{safe_name}"
         try:
-            async with aiohttp.ClientSession() as session:
-                url_api = f"https://api.fishfish.gg/v1/domains/{domena}"
-                async with session.get(url_api) as response:
-                    if response.status == 200:
-                        try:
-                            await message.delete()
-                        except discord.NotFound:
-                            pass
+            await att.save(tmp_path)
+            linie = await analizuj_screen(tmp_path)
+            tekst = " ".join(linie)
+            if policz_wskazniki_scamu(tekst) >= 2:
+                try:
+                    await message.delete()
+                except discord.NotFound:
+                    pass
 
-                        await message.channel.send(f"🛡️ **A dangerous link has been blocked!** {message.author.mention} tried to send a SCAM.", delete_after=10)
-
-                        conn = sqlite3.connect("gildia.db")
-                        res = conn.cursor().execute("SELECT wartosc FROM ustawienia WHERE klucz = 'kanal_logow'").fetchone()
-                        conn.close()
-
-                        if res:
-                            kanal_logow = bot.get_channel(int(res[0]))
-                            if kanal_logow:
-                                embed = discord.Embed(title="🚨 A phishing attempt has been blocked", color=discord.Color.red())
-                                embed.set_author(name=f"{message.author.display_name} ({message.author.id})", icon_url=message.author.display_avatar.url)
-                                embed.add_field(name="Kanał", value=message.channel.mention, inline=True)
-                                embed.add_field(name="Domena", value=f"`{domena}`", inline=True)
-                                embed.add_field(
-                                    name="Treść",
-                                    value=(message.content[:1000] if message.content else "*[No text]*"),
-                                    inline=False
-                                )
-                                await kanal_logow.send(embed=embed)
-                        break  
+                await message.channel.send(
+                    f"🛡️ **Suspicious scam image blocked!** {message.author.mention}'s attachment matched known scam patterns "
+                    f"(fake giveaway / crypto-casino screenshots).",
+                    delete_after=10
+                )
+                await wyslij_log(
+                    "🚨 A scam image has been blocked",
+                    discord.Color.red(),
+                    message.author,
+                    message.channel,
+                    [
+                        ("Kanał", message.channel.mention, True),
+                        ("Plik", att.filename, True),
+                        ("Wykryty tekst (OCR)", tekst[:1000] if tekst else "*[No text detected]*", False),
+                    ]
+                )
+                await bot.process_commands(message)
+                return
         except Exception as e:
-            print(f"Error checking link {link}: {e}")
+            print(f"Error scanning attachment for scam content: {e}")
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
     await bot.process_commands(message)
 
@@ -358,22 +444,17 @@ async def on_message_delete(message: discord.Message):
     if message.author.bot:
         return
 
-    conn = sqlite3.connect("gildia.db")
-    res = conn.cursor().execute("SELECT wartosc FROM ustawienia WHERE klucz = 'kanal_logow'").fetchone()
-    conn.close()
-
-    if res:
-        try:
-            kanal_logow = bot.get_channel(int(res[0]))
-            if kanal_logow:
-                embed = discord.Embed(title="🗑️ Deleted message", color=discord.Color.orange())
-                embed.set_author(name=f"{message.author.display_name} ({message.author.id})", icon_url=message.author.display_avatar.url)
-                embed.add_field(name="Channel", value=message.channel.mention, inline=True)
-                tresc = message.content if message.content else "*[No text]*"
-                embed.add_field(name="Message", value=tresc[:1000], inline=False)
-                await kanal_logow.send(embed=embed)
-        except Exception as e:
-            print(f"Error logging deleted message: {e}")
+    tresc = message.content if message.content else "*[No text]*"
+    await wyslij_log(
+        "🗑️ Deleted message",
+        discord.Color.orange(),
+        message.author,
+        message.channel,
+        [
+            ("Kanał", message.channel.mention, True),
+            ("Treść", tresc[:1000], False),
+        ]
+    )
 
 @bot.event
 async def on_ready():
