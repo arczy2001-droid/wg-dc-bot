@@ -14,15 +14,15 @@ from urllib.parse import urlparse
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 OCR_API_KEY = os.getenv("OCR_SPACE_API_KEY")
 
-#    BAZA DANYCH
+#    BAZA DANYCH (każda tabela jest teraz scoped per-guild via guild_id)
 def init_db():
     conn = sqlite3.connect("gildia.db")
     c = conn.cursor()
-    c.execute("CREATE TABLE IF NOT EXISTS nieobecnosci (swiat TEXT, nick TEXT, data_wpisu TIMESTAMP)")
-    c.execute("CREATE TABLE IF NOT EXISTS ustawienia (klucz TEXT PRIMARY KEY, wartosc TEXT)")
-    c.execute("CREATE TABLE IF NOT EXISTS czlonkowie (swiat TEXT, nick TEXT, PRIMARY KEY(swiat, nick))")
-    c.execute("CREATE TABLE IF NOT EXISTS swiaty (nazwa TEXT PRIMARY KEY, kanal_id TEXT)")
-    c.execute("CREATE TABLE IF NOT EXISTS raporty (swiat TEXT, data_wpisu TIMESTAMP)")
+    c.execute("CREATE TABLE IF NOT EXISTS nieobecnosci (guild_id TEXT, swiat TEXT, nick TEXT, data_wpisu TIMESTAMP)")
+    c.execute("CREATE TABLE IF NOT EXISTS ustawienia (guild_id TEXT, klucz TEXT, wartosc TEXT, PRIMARY KEY (guild_id, klucz))")
+    c.execute("CREATE TABLE IF NOT EXISTS czlonkowie (guild_id TEXT, swiat TEXT, nick TEXT, PRIMARY KEY (guild_id, swiat, nick))")
+    c.execute("CREATE TABLE IF NOT EXISTS swiaty (guild_id TEXT, nazwa TEXT, kanal_id TEXT, PRIMARY KEY (guild_id, nazwa))")
+    c.execute("CREATE TABLE IF NOT EXISTS raporty (guild_id TEXT, swiat TEXT, data_wpisu TIMESTAMP)")
     conn.commit(); conn.close()
 
 #    OCR
@@ -71,11 +71,12 @@ def policz_wskazniki_scamu(tekst: str) -> int:
     tekst = tekst.lower()
     return sum(1 for kw in SCAM_KEYWORDS if kw in tekst)
 
-async def wyslij_log(tytul: str, kolor: discord.Color, autor: discord.abc.User,
-                      kanal: discord.abc.GuildChannel, pola: list):
-    """Wspólna funkcja do logowania (phishing / scam image / deleted message)."""
+async def wyslij_log(guild_id: str, tytul: str, kolor: discord.Color, autor: discord.abc.User, pola: list):
+    """Wspólna funkcja do logowania (phishing / scam image / deleted message). Czyta kanal_logow scoped per guild."""
     conn = sqlite3.connect("gildia.db")
-    res = conn.cursor().execute("SELECT wartosc FROM ustawienia WHERE klucz = 'kanal_logow'").fetchone()
+    res = conn.cursor().execute(
+        "SELECT wartosc FROM ustawienia WHERE guild_id=? AND klucz='kanal_logow'", (guild_id,)
+    ).fetchone()
     conn.close()
     if not res:
         return
@@ -115,10 +116,15 @@ class MyBot(commands.Bot):
         now = datetime.now()
         if now.weekday() == 6 and now.hour == 21 and now.minute == 0:
             conn = sqlite3.connect("gildia.db")
-            swiaty = conn.cursor().execute("SELECT nazwa, kanal_id FROM swiaty").fetchall()
-            for swiat, kanal_id in swiaty:
-                liczba_raportow = conn.cursor().execute("SELECT COUNT(*) FROM raporty WHERE swiat=?", (swiat.lower(),)).fetchone()[0]
-                res = conn.cursor().execute("SELECT nick, COUNT(*) FROM nieobecnosci WHERE swiat=? GROUP BY nick ORDER BY COUNT(*) DESC", (swiat.lower(),)).fetchall()
+            swiaty = conn.cursor().execute("SELECT guild_id, nazwa, kanal_id FROM swiaty").fetchall()
+            for guild_id, swiat, kanal_id in swiaty:
+                liczba_raportow = conn.cursor().execute(
+                    "SELECT COUNT(*) FROM raporty WHERE guild_id=? AND swiat=?", (guild_id, swiat.lower())
+                ).fetchone()[0]
+                res = conn.cursor().execute(
+                    "SELECT nick, COUNT(*) FROM nieobecnosci WHERE guild_id=? AND swiat=? GROUP BY nick ORDER BY COUNT(*) DESC",
+                    (guild_id, swiat.lower())
+                ).fetchall()
                 txt = "\n".join([f"{r[0]}: {r[1]}x" for r in res]) if res else "No absences have been recorded."
 
                 naglowek = f"📊 **Top absent players from {swiat.upper()} based on ({liczba_raportow}) raports:**"
@@ -127,15 +133,39 @@ class MyBot(commands.Bot):
                     if target_chan:
                         await target_chan.send(f"{naglowek}\n```\n{txt}\n```")
                 except Exception as e:
-                    print(f"Error sending the global ranking automatically {swiat}: {e}")
+                    print(f"Error sending the global ranking automatically {swiat} ({guild_id}): {e}")
             conn.close()
 
 bot = MyBot()
 
-#    Sprawdzenie głównego kanału
+#    Globalny handler błędów komend (np. brak uprawnień)
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        msg = "❌ You need the **Manage Server** permission to use this command."
+    elif isinstance(error, app_commands.CheckFailure):
+        msg = "❌ You don't have permission to use this command here."
+    else:
+        print(f"Unhandled app command error: {error}")
+        msg = "❌ Something went wrong while running that command."
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except Exception:
+        pass
+
+#    Sprawdzenie głównego kanału (scoped per guild)
 async def sprawdz_pozwolenie(interaction: discord.Interaction) -> bool:
+    if not interaction.guild_id:
+        await interaction.response.send_message("❌ This command can only be used inside a server.", ephemeral=True)
+        return False
     conn = sqlite3.connect("gildia.db")
-    res = conn.cursor().execute("SELECT wartosc FROM ustawienia WHERE klucz = 'kanal_glowy'").fetchone()
+    res = conn.cursor().execute(
+        "SELECT wartosc FROM ustawienia WHERE guild_id=? AND klucz='kanal_glowy'",
+        (str(interaction.guild_id),)
+    ).fetchone()
     conn.close()
     if res:
         kanal_id = int(res[0])
@@ -146,60 +176,90 @@ async def sprawdz_pozwolenie(interaction: discord.Interaction) -> bool:
 
 #    Komendy
 @bot.tree.command(name="wg_root", description="Choose channel for commands only")
+@app_commands.checks.has_permissions(manage_guild=True)
 async def wg_root(interaction: discord.Interaction):
+    if not interaction.guild_id:
+        await interaction.response.send_message("❌ This command can only be used inside a server.", ephemeral=True)
+        return
     conn = sqlite3.connect("gildia.db")
-    conn.cursor().execute("INSERT OR REPLACE INTO ustawienia VALUES ('kanal_glowy', ?)", (str(interaction.channel_id),))
+    conn.cursor().execute(
+        "INSERT OR REPLACE INTO ustawienia VALUES (?, 'kanal_glowy', ?)",
+        (str(interaction.guild_id), str(interaction.channel_id))
+    )
     conn.commit(); conn.close()
-    await interaction.response.send_message("✅ Main channel set.")
+    await interaction.response.send_message("✅ Main channel set for this server.")
 
 @bot.tree.command(name="wg_set_logs", description="Sets the channel for log notifications (antiphising and deleted messages)")
+@app_commands.checks.has_permissions(manage_guild=True)
 async def wg_set_logs(interaction: discord.Interaction, kanal: discord.TextChannel):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
-    conn.cursor().execute("INSERT OR REPLACE INTO ustawienia VALUES ('kanal_logow', ?)", (str(kanal.id),))
+    conn.cursor().execute(
+        "INSERT OR REPLACE INTO ustawienia VALUES (?, 'kanal_logow', ?)",
+        (str(interaction.guild_id), str(kanal.id))
+    )
     conn.commit()
     conn.close()
     await interaction.response.send_message(f"✅ From now on, logs and notifications about blocked viruses will be sent to: <#{kanal.id}>.")
 
 @bot.tree.command(name="wg_add_world", description="Add world and assign a channel")
+@app_commands.checks.has_permissions(manage_guild=True)
 async def wg_add_world(interaction: discord.Interaction, nazwa: str, kanal: discord.TextChannel):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
-    conn.cursor().execute("INSERT OR REPLACE INTO swiaty VALUES (?, ?)", (nazwa.lower(), str(kanal.id)))
+    conn.cursor().execute(
+        "INSERT OR REPLACE INTO swiaty VALUES (?, ?, ?)",
+        (str(interaction.guild_id), nazwa.lower(), str(kanal.id))
+    )
     conn.commit(); conn.close()
     await interaction.response.send_message(f"✅ World added successfully {nazwa} with assigned channel <#{kanal.id}>.")
 
 @bot.tree.command(name="wg_delete_world", description="Deleting world")
+@app_commands.checks.has_permissions(manage_guild=True)
 async def wg_delete_world(interaction: discord.Interaction, nazwa: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
-    conn.cursor().execute("DELETE FROM swiaty WHERE nazwa = ?", (nazwa.lower(),))
+    gid = str(interaction.guild_id)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM swiaty WHERE guild_id=? AND nazwa=?", (gid, nazwa.lower()))
+    # Cascade: clear out related members/reports/absences for this world too, so they don't linger orphaned.
+    cur.execute("DELETE FROM czlonkowie WHERE guild_id=? AND swiat=?", (gid, nazwa.lower()))
+    cur.execute("DELETE FROM raporty WHERE guild_id=? AND swiat=?", (gid, nazwa.lower()))
+    cur.execute("DELETE FROM nieobecnosci WHERE guild_id=? AND swiat=?", (gid, nazwa.lower()))
     conn.commit(); conn.close()
-    await interaction.response.send_message(f"🗑️ Deleted world {nazwa}. Do you feel like Thanos, the destroyer of worlds? ")
+    await interaction.response.send_message(f"🗑️ Deleted world {nazwa} (and its members/reports/absences). Do you feel like Thanos, the destroyer of worlds? ")
 
 @bot.tree.command(name="wg_worlds", description="List of the worlds")
 async def wg_worlds(interaction: discord.Interaction):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
-    res = conn.cursor().execute("SELECT nazwa, kanal_id FROM swiaty").fetchall()
+    res = conn.cursor().execute(
+        "SELECT nazwa, kanal_id FROM swiaty WHERE guild_id=?", (str(interaction.guild_id),)
+    ).fetchall()
     conn.close()
     txt = "\n".join([f"{r[0]} -> <#{r[1]}>" for r in res]) if res else "There is no added worlds."
     await interaction.response.send_message(f"🌍 Worlds:\n{txt}")
 
 @bot.tree.command(name="wg_add_member", description="Assign players to a world")
+@app_commands.checks.has_permissions(manage_guild=True)
 async def wg_add_member(interaction: discord.Interaction, swiat: str, lista: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
+    gid = str(interaction.guild_id)
     for n in [x.strip() for x in re.split(r'[\n,]+', lista) if x.strip()]:
-        conn.cursor().execute("INSERT OR IGNORE INTO czlonkowie VALUES (?, ?)", (swiat.lower(), n))
+        conn.cursor().execute("INSERT OR IGNORE INTO czlonkowie VALUES (?, ?, ?)", (gid, swiat.lower(), n))
     conn.commit(); conn.close()
     await interaction.response.send_message("✅ The number of lambs of God has increased.")
 
 @bot.tree.command(name="wg_delete_member", description="Deleting player")
+@app_commands.checks.has_permissions(manage_guild=True)
 async def wg_delete_member(interaction: discord.Interaction, swiat: str, nick: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
-    conn.cursor().execute("DELETE FROM czlonkowie WHERE swiat=? AND nick=?", (swiat.lower(), nick))
+    conn.cursor().execute(
+        "DELETE FROM czlonkowie WHERE guild_id=? AND swiat=? AND nick=?",
+        (str(interaction.guild_id), swiat.lower(), nick)
+    )
     conn.commit(); conn.close()
     await interaction.response.send_message(f"🗑️ {nick} has been kicked out of the guild.")
 
@@ -208,7 +268,10 @@ async def wg_member_list(interaction: discord.Interaction, swiat: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT nick FROM czlonkowie WHERE swiat = ? ORDER BY nick ASC", (swiat.lower(),))
+    cursor.execute(
+        "SELECT nick FROM czlonkowie WHERE guild_id=? AND swiat=? ORDER BY nick ASC",
+        (str(interaction.guild_id), swiat.lower())
+    )
     res = [r[0] for r in cursor.fetchall()]
     conn.close()
 
@@ -232,7 +295,10 @@ async def wg(interaction: discord.Interaction, swiat: str, screen: discord.Attac
     if not await sprawdz_pozwolenie(interaction): return
     await interaction.response.defer()
     conn = sqlite3.connect("gildia.db")
-    swiat_data = conn.cursor().execute("SELECT kanal_id FROM swiaty WHERE nazwa=?", (swiat.lower(),)).fetchone()
+    gid = str(interaction.guild_id)
+    swiat_data = conn.cursor().execute(
+        "SELECT kanal_id FROM swiaty WHERE guild_id=? AND nazwa=?", (gid, swiat.lower())
+    ).fetchone()
     if not swiat_data:
         conn.close()
         await interaction.followup.send("❌ Unknow world.")
@@ -242,7 +308,9 @@ async def wg(interaction: discord.Interaction, swiat: str, screen: discord.Attac
     safe_name = re.sub(r'[^A-Za-z0-9._-]', '_', os.path.basename(screen.filename))
     path = f"temp_{interaction.id}_{safe_name}"
     await screen.save(path)
-    sklad = [r[0] for r in conn.cursor().execute("SELECT nick FROM czlonkowie WHERE swiat=?", (swiat.lower(),)).fetchall()]
+    sklad = [r[0] for r in conn.cursor().execute(
+        "SELECT nick FROM czlonkowie WHERE guild_id=? AND swiat=?", (gid, swiat.lower())
+    ).fetchall()]
     lines = await analizuj_screen(path)
 
     nieobecni = []
@@ -255,10 +323,10 @@ async def wg(interaction: discord.Interaction, swiat: str, screen: discord.Attac
                 nieobecni.append(nick)
 
     teraz = datetime.now()
-    conn.cursor().execute("INSERT INTO raporty VALUES (?, ?)", (swiat.lower(), teraz))
+    conn.cursor().execute("INSERT INTO raporty VALUES (?, ?, ?)", (gid, swiat.lower(), teraz))
 
     for n in nieobecni:
-        conn.cursor().execute("INSERT INTO nieobecnosci VALUES (?, ?, ?)", (swiat.lower(), n, teraz))
+        conn.cursor().execute("INSERT INTO nieobecnosci VALUES (?, ?, ?, ?)", (gid, swiat.lower(), n, teraz))
 
     conn.commit(); conn.close()
     if os.path.exists(path): os.remove(path)
@@ -279,8 +347,14 @@ async def wg_absent_list(interaction: discord.Interaction, swiat: str):
     await interaction.response.defer()
 
     conn = sqlite3.connect("gildia.db")
-    liczba_raportow = conn.cursor().execute("SELECT COUNT(*) FROM raporty WHERE swiat=?", (swiat.lower(),)).fetchone()[0]
-    res = conn.cursor().execute("SELECT nick, COUNT(*) FROM nieobecnosci WHERE swiat=? GROUP BY nick ORDER BY COUNT(*) DESC", (swiat.lower(),)).fetchall()
+    gid = str(interaction.guild_id)
+    liczba_raportow = conn.cursor().execute(
+        "SELECT COUNT(*) FROM raporty WHERE guild_id=? AND swiat=?", (gid, swiat.lower())
+    ).fetchone()[0]
+    res = conn.cursor().execute(
+        "SELECT nick, COUNT(*) FROM nieobecnosci WHERE guild_id=? AND swiat=? GROUP BY nick ORDER BY COUNT(*) DESC",
+        (gid, swiat.lower())
+    ).fetchall()
     conn.close()
 
     txt = "\n".join([f"{r[0]}: {r[1]}x" for r in res]) if res else "None of inactive players."
@@ -289,15 +363,25 @@ async def wg_absent_list(interaction: discord.Interaction, swiat: str):
     await interaction.followup.send(f"{naglowek}\n{txt}")
 
 @bot.tree.command(name="wg_delete_raport", description="Deleting last assigned report")
+@app_commands.checks.has_permissions(manage_guild=True)
 async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
-    res = conn.cursor().execute("SELECT MAX(data_wpisu) FROM raporty WHERE swiat=?", (swiat.lower(),)).fetchone()
+    gid = str(interaction.guild_id)
+    res = conn.cursor().execute(
+        "SELECT MAX(data_wpisu) FROM raporty WHERE guild_id=? AND swiat=?", (gid, swiat.lower())
+    ).fetchone()
 
     if res and res[0]:
         ostatnia_data = res[0]
-        conn.cursor().execute("DELETE FROM nieobecnosci WHERE swiat=? AND data_wpisu=?", (swiat.lower(), ostatnia_data))
-        conn.cursor().execute("DELETE FROM raporty WHERE swiat=? AND data_wpisu=?", (swiat.lower(), ostatnia_data))
+        conn.cursor().execute(
+            "DELETE FROM nieobecnosci WHERE guild_id=? AND swiat=? AND data_wpisu=?",
+            (gid, swiat.lower(), ostatnia_data)
+        )
+        conn.cursor().execute(
+            "DELETE FROM raporty WHERE guild_id=? AND swiat=? AND data_wpisu=?",
+            (gid, swiat.lower(), ostatnia_data)
+        )
         conn.commit()
         await interaction.response.send_message("⏪ The latest report has been withdrawn.")
     else:
@@ -305,29 +389,42 @@ async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
     conn.close()
 
 @bot.tree.command(name="wg_add_absent", description="Add single absence to a member")
+@app_commands.checks.has_permissions(manage_guild=True)
 async def wg_add_absent(interaction: discord.Interaction, swiat: str, nick: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
-    conn.cursor().execute("INSERT INTO nieobecnosci VALUES (?, ?, ?)", (swiat.lower(), nick, datetime.now()))
+    conn.cursor().execute(
+        "INSERT INTO nieobecnosci VALUES (?, ?, ?, ?)",
+        (str(interaction.guild_id), swiat.lower(), nick, datetime.now())
+    )
     conn.commit(); conn.close()
     await interaction.response.send_message(f"➕ Added absence for {nick}.")
 
 @bot.tree.command(name="wg_delete_absent", description="Delete single absence for a member")
+@app_commands.checks.has_permissions(manage_guild=True)
 async def wg_delete_absent(interaction: discord.Interaction, swiat: str, nick: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
-    conn.cursor().execute("DELETE FROM nieobecnosci WHERE rowid IN (SELECT rowid FROM nieobecnosci WHERE swiat=? AND nick=? ORDER BY data_wpisu DESC LIMIT 1)", (swiat.lower(), nick))
+    conn.cursor().execute(
+        """DELETE FROM nieobecnosci WHERE rowid IN (
+               SELECT rowid FROM nieobecnosci WHERE guild_id=? AND swiat=? AND nick=?
+               ORDER BY data_wpisu DESC LIMIT 1
+           )""",
+        (str(interaction.guild_id), swiat.lower(), nick)
+    )
     conn.commit(); conn.close()
     await interaction.response.send_message(f"➖ Deleted absence from {nick} member.")
 
-@bot.tree.command(name="wg_clear_all", description="Clearing every absensce report")
+@bot.tree.command(name="wg_clear_all", description="Clearing every absensce report (this server only)")
+@app_commands.checks.has_permissions(manage_guild=True)
 async def wg_clear_all(interaction: discord.Interaction):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
-    conn.cursor().execute("DELETE FROM nieobecnosci")
-    conn.cursor().execute("DELETE FROM raporty")
+    gid = str(interaction.guild_id)
+    conn.cursor().execute("DELETE FROM nieobecnosci WHERE guild_id=?", (gid,))
+    conn.cursor().execute("DELETE FROM raporty WHERE guild_id=?", (gid,))
     conn.commit(); conn.close()
-    await interaction.response.send_message("💥 The absence database and the report counter have been cleared.")
+    await interaction.response.send_message("💥 The absence database and the report counter have been cleared for this server.")
 
 @bot.tree.command(name="test_scrapera", description="Test połączenia bota z SFDataHub")
 async def test_scrapera(interaction: discord.Interaction):
@@ -361,6 +458,8 @@ async def test_scrapera(interaction: discord.Interaction):
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
+    if not message.guild:
+        return  # DMs have no per-guild settings to look up
 
     # --- 1) Sprawdzanie linków przeciw bazie FishFish (malware/phishing) ---
     znalezione_linki = re.findall(r'(https?://[^\s]+)', message.content)
@@ -382,10 +481,10 @@ async def on_message(message: discord.Message):
                         delete_after=10
                     )
                     await wyslij_log(
+                        str(message.guild.id),
                         "🚨 A phishing attempt has been blocked",
                         discord.Color.red(),
                         message.author,
-                        message.channel,
                         [
                             ("Kanał", message.channel.mention, True),
                             ("Domena", f"`{domena}`", True),
@@ -418,10 +517,10 @@ async def on_message(message: discord.Message):
                     delete_after=10
                 )
                 await wyslij_log(
+                    str(message.guild.id),
                     "🚨 A scam image has been blocked",
                     discord.Color.red(),
                     message.author,
-                    message.channel,
                     [
                         ("Kanał", message.channel.mention, True),
                         ("Plik", att.filename, True),
@@ -443,13 +542,15 @@ async def on_message(message: discord.Message):
 async def on_message_delete(message: discord.Message):
     if message.author.bot:
         return
+    if not message.guild:
+        return
 
     tresc = message.content if message.content else "*[No text]*"
     await wyslij_log(
+        str(message.guild.id),
         "🗑️ Deleted message",
         discord.Color.orange(),
         message.author,
-        message.channel,
         [
             ("Kanał", message.channel.mention, True),
             ("Treść", tresc[:1000], False),
