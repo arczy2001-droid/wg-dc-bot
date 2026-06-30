@@ -65,5 +65,11 @@
   },
   "test_scrapera": {
     "description": "Testuje połączenie bota z SFDataHub"
+  },
+  "setup": {
+    "description": "Uruchom jednorazowego kreatora konfiguracji serwera (tylko admin)."
+  },
+  "setup_reset": {
+    "description": "Odblokuj konfigurację, aby móc ponownie uruchomić /setup (tylko admin)."
   }
 }
