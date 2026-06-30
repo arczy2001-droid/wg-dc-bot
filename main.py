@@ -34,14 +34,43 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS czlonkowie (guild_id TEXT, swiat TEXT, nick TEXT, PRIMARY KEY (guild_id, swiat, nick))")
     c.execute("CREATE TABLE IF NOT EXISTS swiaty (guild_id TEXT, nazwa TEXT, kanal_id TEXT, PRIMARY KEY (guild_id, nazwa))")
     c.execute("CREATE TABLE IF NOT EXISTS raporty (guild_id TEXT, swiat TEXT, data_wpisu TIMESTAMP)")
+
     # weekday: Python's datetime.weekday() convention -> Monday=0 ... Sunday=6
-    c.execute("""CREATE TABLE IF NOT EXISTS ranking_schedule (
-        guild_id TEXT PRIMARY KEY,
-        weekday INTEGER NOT NULL DEFAULT 6,
-        hour INTEGER NOT NULL DEFAULT 21,
-        minute INTEGER NOT NULL DEFAULT 0,
-        enabled INTEGER NOT NULL DEFAULT 1
-    )""")
+    # One-time migration: earlier versions had ranking_schedule keyed by guild_id
+    # only (one schedule for ALL worlds). If that old table exists, carry each
+    # guild's schedule over to every world it currently has, then move to the
+    # new per-world schema (guild_id + swiat).
+    cols = [row[1] for row in c.execute("PRAGMA table_info(ranking_schedule)").fetchall()]
+    if cols and "swiat" not in cols:
+        old_rows = c.execute("SELECT guild_id, weekday, hour, minute, enabled FROM ranking_schedule").fetchall()
+        c.execute("ALTER TABLE ranking_schedule RENAME TO ranking_schedule_old_guildlevel")
+        c.execute("""CREATE TABLE ranking_schedule (
+            guild_id TEXT NOT NULL,
+            swiat TEXT NOT NULL,
+            weekday INTEGER NOT NULL DEFAULT 6,
+            hour INTEGER NOT NULL DEFAULT 21,
+            minute INTEGER NOT NULL DEFAULT 0,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY (guild_id, swiat)
+        )""")
+        for guild_id, weekday, hour, minute, enabled in old_rows:
+            worlds = c.execute("SELECT nazwa FROM swiaty WHERE guild_id=?", (guild_id,)).fetchall()
+            for (world_name,) in worlds:
+                c.execute(
+                    "INSERT OR REPLACE INTO ranking_schedule VALUES (?, ?, ?, ?, ?, ?)",
+                    (guild_id, world_name, weekday, hour, minute, enabled)
+                )
+        c.execute("DROP TABLE ranking_schedule_old_guildlevel")
+    else:
+        c.execute("""CREATE TABLE IF NOT EXISTS ranking_schedule (
+            guild_id TEXT NOT NULL,
+            swiat TEXT NOT NULL,
+            weekday INTEGER NOT NULL DEFAULT 6,
+            hour INTEGER NOT NULL DEFAULT 21,
+            minute INTEGER NOT NULL DEFAULT 0,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY (guild_id, swiat)
+        )""")
     conn.commit(); conn.close()
 
 #    OCR
@@ -140,35 +169,38 @@ class MyBot(commands.Bot):
         now = datetime.now()
         conn = sqlite3.connect("gildia.db")
 
-        # Only guilds with an explicit schedule row get checked here; guilds that
-        # never ran /wg_set_ranking simply have automatic ranking off by default
-        # (no surprise messages in a server that never configured this).
-        due_guilds = conn.cursor().execute(
-            "SELECT guild_id FROM ranking_schedule WHERE enabled=1 AND weekday=? AND hour=? AND minute=?",
+        # Only worlds with an explicit schedule row get checked here; worlds that
+        # never had /wg_set_ranking run for them simply have automatic ranking
+        # off by default (no surprise messages for a world that never configured this).
+        due_worlds = conn.cursor().execute(
+            "SELECT guild_id, swiat FROM ranking_schedule WHERE enabled=1 AND weekday=? AND hour=? AND minute=?",
             (now.weekday(), now.hour, now.minute)
         ).fetchall()
 
-        for (guild_id,) in due_guilds:
-            swiaty = conn.cursor().execute(
-                "SELECT nazwa, kanal_id FROM swiaty WHERE guild_id=?", (guild_id,)
-            ).fetchall()
-            for swiat, kanal_id in swiaty:
-                liczba_raportow = conn.cursor().execute(
-                    "SELECT COUNT(*) FROM raporty WHERE guild_id=? AND swiat=?", (guild_id, swiat.lower())
-                ).fetchone()[0]
-                res = conn.cursor().execute(
-                    "SELECT nick, COUNT(*) FROM nieobecnosci WHERE guild_id=? AND swiat=? GROUP BY nick ORDER BY COUNT(*) DESC",
-                    (guild_id, swiat.lower())
-                ).fetchall()
-                txt = "\n".join([f"{r[0]}: {r[1]}x" for r in res]) if res else translator.get_text(int(guild_id), "wg.no_absences")
+        for guild_id, swiat in due_worlds:
+            kanal_row = conn.cursor().execute(
+                "SELECT kanal_id FROM swiaty WHERE guild_id=? AND nazwa=?", (guild_id, swiat)
+            ).fetchone()
+            if not kanal_row:
+                continue  # world was deleted after its schedule was set; nothing to post to
 
-                naglowek = f"📊 **Top absent players from {swiat.upper()} based on ({liczba_raportow}) raports:**"
-                try:
-                    target_chan = self.get_channel(int(kanal_id)) or await self.fetch_channel(int(kanal_id))
-                    if target_chan:
-                        await target_chan.send(f"{naglowek}\n```\n{txt}\n```")
-                except Exception as e:
-                    print(f"Error sending the global ranking automatically {swiat} ({guild_id}): {e}")
+            kanal_id = kanal_row[0]
+            liczba_raportow = conn.cursor().execute(
+                "SELECT COUNT(*) FROM raporty WHERE guild_id=? AND swiat=?", (guild_id, swiat.lower())
+            ).fetchone()[0]
+            res = conn.cursor().execute(
+                "SELECT nick, COUNT(*) FROM nieobecnosci WHERE guild_id=? AND swiat=? GROUP BY nick ORDER BY COUNT(*) DESC",
+                (guild_id, swiat.lower())
+            ).fetchall()
+            txt = "\n".join([f"{r[0]}: {r[1]}x" for r in res]) if res else translator.get_text(int(guild_id), "wg.no_absences")
+
+            naglowek = f"📊 **Top absent players from {swiat.upper()} based on ({liczba_raportow}) raports:**"
+            try:
+                target_chan = self.get_channel(int(kanal_id)) or await self.fetch_channel(int(kanal_id))
+                if target_chan:
+                    await target_chan.send(f"{naglowek}\n```\n{txt}\n```")
+            except Exception as e:
+                print(f"Error sending the global ranking automatically {swiat} ({guild_id}): {e}")
         conn.close()
 
 bot = MyBot()
@@ -466,16 +498,18 @@ WEEKDAY_CHOICES = [
 ]
 WEEKDAY_NAMES = {c.value: c.name for c in WEEKDAY_CHOICES}
 
-@bot.tree.command(name="wg_set_ranking", description="Configure or disable the automatic weekly absence ranking")
+@bot.tree.command(name="wg_set_ranking", description="Configure or disable the automatic weekly absence ranking for one world")
 @app_commands.choices(weekday=WEEKDAY_CHOICES)
 @app_commands.describe(
-    enabled="Turn the automatic weekly ranking on or off",
+    swiat="World this schedule applies to",
+    enabled="Turn the automatic weekly ranking on or off for this world",
     weekday="Day of the week to post it (only used if enabled)",
     hour="Hour, 24h format (only used if enabled)",
     minute="Minute (only used if enabled)",
 )
 async def wg_set_ranking(
     interaction: discord.Interaction,
+    swiat: str,
     enabled: bool,
     weekday: Optional[app_commands.Choice[int]] = None,
     hour: Optional[app_commands.Range[int, 0, 23]] = None,
@@ -483,61 +517,104 @@ async def wg_set_ranking(
 ):
     if not await sprawdz_pozwolenie(interaction): return
     gid = str(interaction.guild_id)
+    swiat_lower = swiat.lower()
+
+    conn = sqlite3.connect("gildia.db")
+    world_exists = conn.execute("SELECT 1 FROM swiaty WHERE guild_id=? AND nazwa=?", (gid, swiat_lower)).fetchone()
+    if not world_exists:
+        conn.close()
+        await interaction.response.send_message(translator.get_text(interaction.guild_id, "wg.unknown_world"))
+        return
 
     if enabled and (weekday is None or hour is None or minute is None):
+        conn.close()
         await interaction.response.send_message(
             "❌ To enable automatic ranking you must provide `weekday`, `hour`, and `minute`.",
             ephemeral=True,
         )
         return
 
-    conn = sqlite3.connect("gildia.db")
     if enabled:
         conn.execute(
-            """INSERT OR REPLACE INTO ranking_schedule (guild_id, weekday, hour, minute, enabled)
-               VALUES (?, ?, ?, ?, 1)""",
-            (gid, weekday.value, hour, minute)
+            """INSERT OR REPLACE INTO ranking_schedule (guild_id, swiat, weekday, hour, minute, enabled)
+               VALUES (?, ?, ?, ?, ?, 1)""",
+            (gid, swiat_lower, weekday.value, hour, minute)
         )
         conn.commit(); conn.close()
         await interaction.response.send_message(
-            f"✅ Automatic ranking enabled — every **{weekday.name}** at **{hour:02d}:{minute:02d}** (server time)."
+            f"✅ Automatic ranking enabled for **{swiat.upper()}** — every **{weekday.name}** "
+            f"at **{hour:02d}:{minute:02d}** (server time)."
         )
     else:
         # Keep any existing weekday/hour/minute on record (so re-enabling later
         # restores the previous schedule) — just flip the flag off.
-        existing = conn.execute("SELECT 1 FROM ranking_schedule WHERE guild_id=?", (gid,)).fetchone()
+        existing = conn.execute(
+            "SELECT 1 FROM ranking_schedule WHERE guild_id=? AND swiat=?", (gid, swiat_lower)
+        ).fetchone()
         if existing:
-            conn.execute("UPDATE ranking_schedule SET enabled=0 WHERE guild_id=?", (gid,))
+            conn.execute(
+                "UPDATE ranking_schedule SET enabled=0 WHERE guild_id=? AND swiat=?", (gid, swiat_lower)
+            )
         else:
             conn.execute(
-                "INSERT INTO ranking_schedule (guild_id, weekday, hour, minute, enabled) VALUES (?, 6, 21, 0, 0)",
-                (gid,)
+                "INSERT INTO ranking_schedule (guild_id, swiat, weekday, hour, minute, enabled) VALUES (?, ?, 6, 21, 0, 0)",
+                (gid, swiat_lower)
             )
         conn.commit(); conn.close()
-        await interaction.response.send_message("🔕 Automatic weekly ranking disabled.")
+        await interaction.response.send_message(f"🔕 Automatic weekly ranking disabled for **{swiat.upper()}**.")
 
 @bot.tree.command(name="wg_ranking_status", description="Show the current automatic ranking schedule")
-async def wg_ranking_status(interaction: discord.Interaction):
+@app_commands.describe(swiat="Show only this world's schedule (omit to list every world)")
+async def wg_ranking_status(interaction: discord.Interaction, swiat: Optional[str] = None):
     if not await sprawdz_pozwolenie(interaction): return
+    gid = str(interaction.guild_id)
     conn = sqlite3.connect("gildia.db")
-    row = conn.execute(
-        "SELECT weekday, hour, minute, enabled FROM ranking_schedule WHERE guild_id=?",
-        (str(interaction.guild_id),)
-    ).fetchone()
-    conn.close()
 
-    if not row or not row[3]:
+    if swiat:
+        swiat_lower = swiat.lower()
+        world_exists = conn.execute("SELECT 1 FROM swiaty WHERE guild_id=? AND nazwa=?", (gid, swiat_lower)).fetchone()
+        if not world_exists:
+            conn.close()
+            await interaction.response.send_message(translator.get_text(interaction.guild_id, "wg.unknown_world"))
+            return
+
+        row = conn.execute(
+            "SELECT weekday, hour, minute, enabled FROM ranking_schedule WHERE guild_id=? AND swiat=?",
+            (gid, swiat_lower)
+        ).fetchone()
+        conn.close()
+
+        if not row or not row[3]:
+            await interaction.response.send_message(
+                f"🔕 Automatic weekly ranking is currently **disabled** for **{swiat.upper()}**. "
+                "Use `/wg_set_ranking` to turn it on."
+            )
+            return
+
+        weekday, hour, minute, _ = row
         await interaction.response.send_message(
-            "🔕 Automatic weekly ranking is currently **disabled** for this server. "
-            "Use `/wg_set_ranking` to turn it on."
+            f"📅 Automatic ranking for **{swiat.upper()}** is **enabled** — every "
+            f"**{WEEKDAY_NAMES.get(weekday, weekday)}** at **{hour:02d}:{minute:02d}** (server time)."
         )
-        return
+    else:
+        rows = conn.execute(
+            "SELECT swiat, weekday, hour, minute, enabled FROM ranking_schedule WHERE guild_id=?", (gid,)
+        ).fetchall()
+        conn.close()
 
-    weekday, hour, minute, _ = row
-    await interaction.response.send_message(
-        f"📅 Automatic ranking is **enabled** — every **{WEEKDAY_NAMES.get(weekday, weekday)}** "
-        f"at **{hour:02d}:{minute:02d}** (server time)."
-    )
+        active = [r for r in rows if r[4]]
+        if not active:
+            await interaction.response.send_message(
+                "🔕 Automatic weekly ranking is currently **disabled** for every world on this server. "
+                "Use `/wg_set_ranking` to turn it on for a specific world."
+            )
+            return
+
+        lines = [
+            f"**{world.upper()}**: every {WEEKDAY_NAMES.get(weekday, weekday)} at {hour:02d}:{minute:02d}"
+            for world, weekday, hour, minute, _ in active
+        ]
+        await interaction.response.send_message("📅 Automatic ranking schedule:\n" + "\n".join(lines))
 
 @bot.tree.command(name="test_scrapera", description="Test połączenia bota z SFDataHub")
 async def test_scrapera(interaction: discord.Interaction):
