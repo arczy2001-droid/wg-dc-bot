@@ -19,6 +19,26 @@
     "absent_list_header": "📊 **Najwięcej nieobecności na świecie {world}, na podstawie {report_count} raportów:**",
     "no_absences": "Brak nieaktywnych graczy."
   },
+  "worlds": {
+    "added": "✅ Świat {world} został pomyślnie dodany z przypisanym kanałem {channel}.",
+    "deleted": "🗑️ Usunięto świat {world} (wraz z członkami/raportami/nieobecnościami). Czujesz się jak Thanos, niszczyciel światów?",
+    "list_header": "🌍 Światy:",
+    "list_empty": "Nie dodano żadnych światów."
+  },
+  "members": {
+    "added": "✅ Liczba owieczek Bożych wzrosła.",
+    "deleted": "🗑️ {nick} został wyrzucony z gildii.",
+    "list_empty": "👻 Lista członków jest pusta.",
+    "list_title": "📜 Lista członków: {world}",
+    "list_footer": "Łączna liczba członków: {count}"
+  },
+  "reports": {
+    "withdrawn": "⏪ Ostatni raport został wycofany.",
+    "none_found": "❌ Nie znaleziono żadnych raportów dla tego świata.",
+    "absence_added": "➕ Dodano nieobecność dla {nick}.",
+    "absence_deleted": "➖ Usunięto nieobecność gracza {nick}.",
+    "all_cleared": "💥 Baza danych nieobecności i licznik raportów zostały wyczyszczone dla tego serwera."
+  },
   "security": {
     "phishing_blocked": "🛡️ **Zablokowano niebezpieczny link!** {mention} próbował wysłać SCAM.",
     "scam_image_blocked": "🛡️ **Zablokowano podejrzany obrazek!** Załącznik od {mention} odpowiada znanym wzorcom oszustwa."
