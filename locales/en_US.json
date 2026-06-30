@@ -1,0 +1,26 @@
+{
+  "setup": {
+    "step1_title": "🛠️ Server Setup — Step 1/6",
+    "step1_prompt": "Choose the channel where bot commands are allowed:",
+    "main_channel_set": "✅ Main channel set to {channel}.",
+    "already_configured": "🔒 This server is already configured. The setup wizard is locked to prevent accidental reconfiguration.",
+    "complete": "✅ Setup complete!"
+  },
+  "errors": {
+    "no_permission": "❌ You need the **{permission}** permission to use this command.",
+    "wrong_channel": "❌ Commands can only be entered on the main channel: {channel}.",
+    "guild_only": "❌ This command can only be used inside a server."
+  },
+  "wg": {
+    "unknown_world": "❌ Unknown world.",
+    "report_sent": "✅ Report has been sent on {channel}.",
+    "inactive_players": "🚨 Inactive during the last battle ({world}): {players}",
+    "full_attendance": "No one — full attendance! 🎉",
+    "absent_list_header": "📊 **Top absences on {world} world, based on {report_count} report numbers:**",
+    "no_absences": "None of inactive players."
+  },
+  "security": {
+    "phishing_blocked": "🛡️ **A dangerous link has been blocked!** {mention} tried to send a SCAM.",
+    "scam_image_blocked": "🛡️ **Suspicious scam image blocked!** {mention}'s attachment matched known scam patterns."
+  }
+}

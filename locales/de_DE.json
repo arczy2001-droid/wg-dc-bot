@@ -1,0 +1,23 @@
+{
+  "setup": {
+    "step1_title": "🛠️ Server-Einrichtung — Schritt 1/6",
+    "step1_prompt": "Wähle den Kanal, in dem Bot-Befehle erlaubt sind:",
+    "main_channel_set": "✅ Hauptkanal auf {channel} gesetzt.",
+    "already_configured": "🔒 Dieser Server ist bereits konfiguriert. Der Einrichtungsassistent ist gesperrt, um versehentliche Änderungen zu verhindern.",
+    "complete": "✅ Einrichtung abgeschlossen!"
+  },
+  "errors": {
+    "no_permission": "❌ Du benötigst die Berechtigung **{permission}**, um diesen Befehl zu nutzen.",
+    "wrong_channel": "❌ Befehle können nur im Hauptkanal verwendet werden: {channel}.",
+    "guild_only": "❌ Dieser Befehl kann nur auf einem Server verwendet werden."
+  },
+  "wg": {
+    "unknown_world": "❌ Unbekannte Welt.",
+    "report_sent": "✅ Bericht wurde an {channel} gesendet.",
+    "absent_list_header": "📊 **Meiste Abwesenheiten in der Welt {world}, basierend auf {report_count} Berichten:**",
+    "no_absences": "Keine inaktiven Spieler."
+  },
+  "security": {
+    "phishing_blocked": "🛡️ **Ein gefährlicher Link wurde blockiert!** {mention} hat versucht, einen SCAM zu senden."
+  }
+}

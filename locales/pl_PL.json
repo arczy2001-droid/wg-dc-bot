@@ -1,0 +1,26 @@
+{
+  "setup": {
+    "step1_title": "🛠️ Konfiguracja serwera — Krok 1/6",
+    "step1_prompt": "Wybierz kanał, na którym dozwolone są komendy bota:",
+    "main_channel_set": "✅ Główny kanał ustawiony na {channel}.",
+    "already_configured": "🔒 Ten serwer jest już skonfigurowany. Kreator konfiguracji jest zablokowany, aby zapobiec przypadkowej zmianie ustawień.",
+    "complete": "✅ Konfiguracja zakończona!"
+  },
+  "errors": {
+    "no_permission": "❌ Musisz mieć uprawnienie **{permission}**, aby użyć tej komendy.",
+    "wrong_channel": "❌ Komendy można wpisywać tylko na głównym kanale: {channel}.",
+    "guild_only": "❌ Tej komendy można używać tylko na serwerze."
+  },
+  "wg": {
+    "unknown_world": "❌ Nieznany świat.",
+    "report_sent": "✅ Raport został wysłany na {channel}.",
+    "inactive_players": "🚨 Nieaktywni podczas ostatniej bitwy ({world}): {players}",
+    "full_attendance": "Nikt — pełna obecność! 🎉",
+    "absent_list_header": "📊 **Najwięcej nieobecności na świecie {world}, na podstawie {report_count} raportów:**",
+    "no_absences": "Brak nieaktywnych graczy."
+  },
+  "security": {
+    "phishing_blocked": "🛡️ **Zablokowano niebezpieczny link!** {mention} próbował wysłać SCAM.",
+    "scam_image_blocked": "🛡️ **Zablokowano podejrzany obrazek!** Załącznik od {mention} odpowiada znanym wzorcom oszustwa."
+  }
+}
