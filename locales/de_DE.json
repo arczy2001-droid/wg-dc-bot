@@ -18,6 +18,26 @@
     "no_absences": "Keine inaktiven Spieler.",
     "full_attendance": "Niemand — volle Anwesenheit! 🎉"
   },
+  "worlds": {
+    "added": "✅ Welt {world} wurde erfolgreich hinzugefügt, mit zugewiesenem Kanal {channel}.",
+    "deleted": "🗑️ Welt {world} wurde gelöscht (inklusive Mitglieder/Berichte/Abwesenheiten). Fühlst du dich wie Thanos, der Zerstörer der Welten?",
+    "list_header": "🌍 Welten:",
+    "list_empty": "Es wurden keine Welten hinzugefügt."
+  },
+  "members": {
+    "added": "✅ Die Anzahl der Schäfchen Gottes ist gewachsen.",
+    "deleted": "🗑️ {nick} wurde aus der Gilde geworfen.",
+    "list_empty": "👻 Die Mitgliederliste ist leer.",
+    "list_title": "📜 Mitgliederliste: {world}",
+    "list_footer": "Gesamtzahl der Mitglieder: {count}"
+  },
+  "reports": {
+    "withdrawn": "⏪ Der letzte Bericht wurde zurückgezogen.",
+    "none_found": "❌ Für diese Welt wurden keine Berichte gefunden.",
+    "absence_added": "➕ Abwesenheit für {nick} hinzugefügt.",
+    "absence_deleted": "➖ Abwesenheit von {nick} gelöscht.",
+    "all_cleared": "💥 Die Abwesenheitsdatenbank und der Berichtszähler wurden für diesen Server geleert."
+  },
   "security": {
     "phishing_blocked": "🛡️ **Ein gefährlicher Link wurde blockiert!** {mention} hat versucht, einen SCAM zu senden.",
     "scam_image_blocked": "🛡️ **Verdächtiges Scam-Bild blockiert!** Der Anhang von {mention} entspricht bekannten Betrugsmustern."
