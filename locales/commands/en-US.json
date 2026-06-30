@@ -65,5 +65,11 @@
   },
   "test_scrapera": {
     "description": "Test the bot's connection to SFDataHub"
+  },
+  "setup": {
+    "description": "Run the one-time server configuration wizard (admin only)."
+  },
+  "setup_reset": {
+    "description": "Unlock configuration so /setup can be run again (admin only)."
   }
 }
