@@ -73,16 +73,20 @@
     "description": "Odblokuj konfigurację, aby móc ponownie uruchomić /setup (tylko admin)."
   },
   "wg_set_ranking": {
-    "description": "Skonfiguruj lub wyłącz automatyczny cotygodniowy ranking nieobecności",
+    "description": "Skonfiguruj lub wyłącz automatyczny cotygodniowy ranking nieobecności dla jednego świata",
     "options": {
-      "enabled": "Włącz lub wyłącz automatyczny cotygodniowy ranking",
+      "swiat": "Świat, którego dotyczy ten harmonogram",
+      "enabled": "Włącz lub wyłącz automatyczny cotygodniowy ranking dla tego świata",
       "weekday": "Dzień tygodnia, w którym ma być publikowany (tylko gdy włączony)",
       "hour": "Godzina, format 24h (tylko gdy włączony)",
       "minute": "Minuta (tylko gdy włączony)"
     }
   },
   "wg_ranking_status": {
-    "description": "Pokaż aktualny harmonogram automatycznego rankingu"
+    "description": "Pokaż aktualny harmonogram automatycznego rankingu",
+    "options": {
+      "swiat": "Pokaż harmonogram tylko dla tego świata (pomiń, aby zobaczyć wszystkie)"
+    }
   },
   "settings": {
     "description": "Zmień jedno ustawienie serwera bez resetowania wszystkiego (tylko admin)."
