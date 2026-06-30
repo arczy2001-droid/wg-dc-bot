@@ -1,0 +1,62 @@
+{
+  "wg_add_world": {
+    "description": "Welt hinzufügen und einen Kanal zuweisen",
+    "options": {
+      "nazwa": "Weltname",
+      "kanal": "Kanal, in dem die Berichte dieser Welt gepostet werden"
+    }
+  },
+  "wg_delete_world": {
+    "description": "Welt löschen",
+    "options": { "nazwa": "Zu löschende Welt" }
+  },
+  "wg_worlds": {
+    "description": "Liste der Welten"
+  },
+  "wg_add_member": {
+    "description": "Spieler einer Welt zuweisen",
+    "options": {
+      "swiat": "Weltname",
+      "lista": "Spieler-Nicknamen, getrennt durch Kommas oder Zeilenumbrüche"
+    }
+  },
+  "wg_delete_member": {
+    "description": "Spieler löschen",
+    "options": {
+      "swiat": "Weltname",
+      "nick": "Zu entfernender Spieler-Nickname"
+    }
+  },
+  "wg_member_list": {
+    "description": "Mitgliederliste",
+    "options": { "swiat": "Weltname" }
+  },
+  "wg": {
+    "description": "Aktivitätsbericht hochladen",
+    "options": {
+      "swiat": "Weltname"
+    }
+  },
+  "wg_absent_list": {
+    "description": "Abwesenheitsliste",
+    "options": { "swiat": "Weltname" }
+  },
+  "wg_delete_raport": {
+    "description": "Letzten zugewiesenen Bericht löschen",
+    "options": { "swiat": "Weltname" }
+  },
+  "wg_add_absent": {
+    "description": "Eine Abwesenheit für ein Mitglied hinzufügen",
+    "options": {
+      "swiat": "Weltname",
+      "nick": "Spieler-Nickname"
+    }
+  },
+  "wg_delete_absent": {
+    "description": "Eine Abwesenheit für ein Mitglied löschen",
+    "options": {
+      "swiat": "Weltname",
+      "nick": "Spieler-Nickname"
+    }
+  }
+}
