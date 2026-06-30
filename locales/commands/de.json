@@ -71,5 +71,20 @@
   },
   "test_scrapera": {
     "description": "Testet die Verbindung des Bots zu SFDataHub"
+  },
+  "wg_set_ranking": {
+    "description": "Automatisches wöchentliches Abwesenheits-Ranking konfigurieren oder deaktivieren",
+    "options": {
+      "enabled": "Automatisches wöchentliches Ranking ein- oder ausschalten",
+      "weekday": "Wochentag für die Veröffentlichung (nur relevant, wenn aktiviert)",
+      "hour": "Stunde, 24-Stunden-Format (nur relevant, wenn aktiviert)",
+      "minute": "Minute (nur relevant, wenn aktiviert)"
+    }
+  },
+  "wg_ranking_status": {
+    "description": "Den aktuellen automatischen Ranking-Zeitplan anzeigen"
+  },
+  "settings": {
+    "description": "Eine einzelne Servereinstellung ändern, ohne alles zurückzusetzen (nur Admin)."
   }
 }
