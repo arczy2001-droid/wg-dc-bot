@@ -71,5 +71,20 @@
   },
   "setup_reset": {
     "description": "Unlock configuration so /setup can be run again (admin only)."
+  },
+  "wg_set_ranking": {
+    "description": "Configure or disable the automatic weekly absence ranking",
+    "options": {
+      "enabled": "Turn the automatic weekly ranking on or off",
+      "weekday": "Day of the week to post it (only used if enabled)",
+      "hour": "Hour, 24h format (only used if enabled)",
+      "minute": "Minute (only used if enabled)"
+    }
+  },
+  "wg_ranking_status": {
+    "description": "Show the current automatic ranking schedule"
+  },
+  "settings": {
+    "description": "Change a single server setting without resetting everything (admin only)."
   }
 }
