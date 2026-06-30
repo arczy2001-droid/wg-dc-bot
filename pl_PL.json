@@ -1,0 +1,69 @@
+{
+  "wg_add_world": {
+    "description": "Dodaj świat i przypisz kanał",
+    "options": {
+      "nazwa": "Nazwa świata",
+      "kanal": "Kanał, na który będą wysyłane raporty tego świata"
+    }
+  },
+  "wg_delete_world": {
+    "description": "Usuwanie świata",
+    "options": { "nazwa": "Nazwa świata do usunięcia" }
+  },
+  "wg_worlds": {
+    "description": "Lista światów"
+  },
+  "wg_add_member": {
+    "description": "Przypisz graczy do świata",
+    "options": {
+      "swiat": "Nazwa świata",
+      "lista": "Nicki graczy, oddzielone przecinkami lub nowymi liniami"
+    }
+  },
+  "wg_delete_member": {
+    "description": "Usuwanie gracza",
+    "options": {
+      "swiat": "Nazwa świata",
+      "nick": "Nick gracza do usunięcia"
+    }
+  },
+  "wg_member_list": {
+    "description": "Lista członków",
+    "options": { "swiat": "Nazwa świata" }
+  },
+  "wg": {
+    "description": "Prześlij raport aktywności",
+    "options": {
+      "swiat": "Nazwa świata",
+      "screen": "Zrzut ekranu z listą bitwy/aktywności"
+    }
+  },
+  "wg_absent_list": {
+    "description": "Lista nieobecności",
+    "options": { "swiat": "Nazwa świata" }
+  },
+  "wg_delete_raport": {
+    "description": "Usuwanie ostatniego przypisanego raportu",
+    "options": { "swiat": "Nazwa świata" }
+  },
+  "wg_add_absent": {
+    "description": "Dodaj pojedynczą nieobecność dla gracza",
+    "options": {
+      "swiat": "Nazwa świata",
+      "nick": "Nick gracza"
+    }
+  },
+  "wg_delete_absent": {
+    "description": "Usuń pojedynczą nieobecność dla gracza",
+    "options": {
+      "swiat": "Nazwa świata",
+      "nick": "Nick gracza"
+    }
+  },
+  "wg_clear_all": {
+    "description": "Czyszczenie wszystkich raportów nieobecności (tylko ten serwer)"
+  },
+  "test_scrapera": {
+    "description": "Testuje połączenie bota z SFDataHub"
+  }
+}
