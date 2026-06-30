@@ -12,6 +12,8 @@ import aiohttp
 from urllib.parse import urlparse
 
 from setup_wizard import setup as setup_command, setup_reset as setup_reset_command, init_setup_table
+from i18n import translator
+from command_i18n import CommandTranslator
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 OCR_API_KEY = os.getenv("OCR_SPACE_API_KEY")
@@ -105,6 +107,7 @@ class MyBot(commands.Bot):
         init_setup_table()
         self.tree.add_command(setup_command)
         self.tree.add_command(setup_reset_command)
+        await self.tree.set_translator(CommandTranslator())  # must be set before sync()
         self.czyszczenie.start()
         self.niedzielny_ranking.start()
         await self.tree.sync()
@@ -181,6 +184,7 @@ async def sprawdz_pozwolenie(interaction: discord.Interaction) -> bool:
     return True
 
 #    Komendy
+@bot.tree.command(name="wg_add_world", description="Add world and assign a channel")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def wg_add_world(interaction: discord.Interaction, nazwa: str, kanal: discord.TextChannel):
     if not await sprawdz_pozwolenie(interaction): return
@@ -279,7 +283,7 @@ async def wg(interaction: discord.Interaction, swiat: str, screen: discord.Attac
     ).fetchone()
     if not swiat_data:
         conn.close()
-        await interaction.followup.send("❌ Unknow world.")
+        await interaction.followup.send(translator.get_text(interaction.guild_id, "wg.unknown_world"))
         return
 
     # Sanitize filename so we never write outside the working dir
@@ -309,12 +313,16 @@ async def wg(interaction: discord.Interaction, swiat: str, screen: discord.Attac
     conn.commit(); conn.close()
     if os.path.exists(path): os.remove(path)
 
-    opis_nieobecnych = ', '.join(nieobecni) if nieobecni else "No one — full attendance! 🎉"
+    opis_nieobecnych = ', '.join(nieobecni) if nieobecni else translator.get_text(interaction.guild_id, "wg.full_attendance")
 
     try:
         target_chan = bot.get_channel(int(swiat_data[0])) or await bot.fetch_channel(int(swiat_data[0]))
-        await target_chan.send(f"🚨 Inactive during the last battle ({swiat.upper()}): {opis_nieobecnych}")
-        await interaction.followup.send(f"✅ Report has been sent on {target_chan.mention}.")
+        await target_chan.send(
+            translator.get_text(interaction.guild_id, "wg.inactive_players", world=swiat.upper(), players=opis_nieobecnych)
+        )
+        await interaction.followup.send(
+            translator.get_text(interaction.guild_id, "wg.report_sent", channel=target_chan.mention)
+        )
     except Exception as e:
         print(f"Error sending the report to the world channel: {e}")
         await interaction.followup.send("✅ Report processed, but I couldn't notify the world channel (check its permissions).")
@@ -455,7 +463,7 @@ async def on_message(message: discord.Message):
                         pass
 
                     await message.channel.send(
-                        f"🛡️ **A dangerous link has been blocked!** {message.author.mention} tried to send a SCAM.",
+                        translator.get_text(message.guild.id, "security.phishing_blocked", mention=message.author.mention),
                         delete_after=10
                     )
                     await wyslij_log(
@@ -490,8 +498,7 @@ async def on_message(message: discord.Message):
                     pass
 
                 await message.channel.send(
-                    f"🛡️ **Suspicious scam image blocked!** {message.author.mention}'s attachment matched known scam patterns "
-                    f"(fake giveaway / crypto-casino screenshots).",
+                    translator.get_text(message.guild.id, "security.scam_image_blocked", mention=message.author.mention),
                     delete_after=10
                 )
                 await wyslij_log(
