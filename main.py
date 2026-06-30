@@ -11,7 +11,12 @@ import difflib
 import aiohttp
 from urllib.parse import urlparse
 
-from setup_wizard import setup as setup_command, setup_reset as setup_reset_command, init_setup_table
+from setup_wizard import (
+    setup as setup_command,
+    setup_reset as setup_reset_command,
+    settings as settings_command,
+    init_setup_table,
+)
 from i18n import translator
 from command_i18n import CommandTranslator
 
@@ -107,6 +112,7 @@ class MyBot(commands.Bot):
         init_setup_table()
         self.tree.add_command(setup_command)
         self.tree.add_command(setup_reset_command)
+        self.tree.add_command(settings_command)
         await self.tree.set_translator(CommandTranslator())  # must be set before sync()
         self.czyszczenie.start()
         self.niedzielny_ranking.start()
