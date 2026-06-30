@@ -58,5 +58,8 @@
       "swiat": "Weltname",
       "nick": "Spieler-Nickname"
     }
+  },
+  "setup": {
+    "description": "Den einmaligen Server-Einrichtungsassistenten ausführen (nur Admin)."
   }
 }
