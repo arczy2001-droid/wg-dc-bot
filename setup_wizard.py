@@ -4,13 +4,19 @@ setup_wizard.py
 One-time, interactive `/setup` slash command for guild configuration.
 
 INTEGRATION (in your main bot file):
-    from setup_wizard import setup as setup_command, setup_reset as setup_reset_command, init_setup_table
+    from setup_wizard import (
+        setup as setup_command,
+        setup_reset as setup_reset_command,
+        settings as settings_command,
+        init_setup_table,
+    )
 
     class MyBot(commands.Bot):
         async def setup_hook(self):
             init_setup_table()                          # creates guild_config table if missing
             self.tree.add_command(setup_command)          # registers /setup
             self.tree.add_command(setup_reset_command)    # registers /setup_reset
+            self.tree.add_command(settings_command)       # registers /settings
             ...
 
 NOTE: this introduces a NEW table (`guild_config`) separate from your existing
@@ -117,14 +123,6 @@ class WizardState:
 # ---------------------------------------------------------------------------
 # OPTION CATALOGS — extend these as the bot grows
 # ---------------------------------------------------------------------------
-# value is a locale code matching a locales/{code}.json file exactly
-# (see i18n.py) — keeps this aligned with the translation system, not just
-# a generic ISO 639-1 code.
-LANGUAGE_CHOICES = [
-    discord.SelectOption(label="English", value="en_US", emoji="🇬🇧"),
-    discord.SelectOption(label="Polski", value="pl_PL", emoji="🇵🇱"),
-    discord.SelectOption(label="Deutsch", value="de_DE", emoji="🇩🇪"),
-]
 
 TIMEZONE_CHOICES = [
     discord.SelectOption(label="UTC", value="UTC", description="Coordinated Universal Time"),
@@ -135,7 +133,13 @@ TIMEZONE_CHOICES = [
     discord.SelectOption(label="PST", value="PST", description="US Pacific Time (UTC-8)"),
 ]
 
-
+# value is a locale code matching a locales/{code}.json file exactly
+# (see i18n.py) — keeps this aligned with the translation system, not just
+# a generic ISO 639-1 code.
+LANGUAGE_CHOICES = [
+    discord.SelectOption(label="English", value="en_US", emoji="🇬🇧"),
+    discord.SelectOption(label="Polski", value="pl_PL", emoji="🇵🇱"),
+]
 
 # Add future modules here — the multi-select grows automatically since
 # max_values is derived from len(MODULE_CHOICES) below.
@@ -343,8 +347,8 @@ class Step5_AdminRole(WizardBaseView):
             content=(
                 "**🛠️ Server Setup — Step 6/6**\n"
                 f"✅ Bot-admin role set to {role.mention}.\n\n"
-                "Finally, choose which modules to enable "
-                "(Anti-Phishing is pre-selected and recommended):"
+                "Finally, choose which modules to enable (Anti-Phishing is pre-selected "
+                "and recommended), then click **Continue**:"
             ),
             view=next_view,
         )
@@ -357,8 +361,13 @@ class Step5_AdminRole(WizardBaseView):
 class Step6_Modules(WizardBaseView):
     def __init__(self, state: WizardState):
         super().__init__(state)
+        # Anti-Phishing is pre-checked (matches MODULE_CHOICES' default=True) so an
+        # admin who clicks "Continue" without touching the select still gets the
+        # sensible default — but they're never FORCED to open the select at all.
+        self.state.modules = [opt.value for opt in MODULE_CHOICES if opt.default]
+
         select = discord.ui.Select(
-            placeholder="Select modules to enable...",
+            placeholder="Select modules to enable (optional — defaults shown)...",
             options=MODULE_CHOICES,
             min_values=0,
             max_values=len(MODULE_CHOICES),
@@ -367,8 +376,26 @@ class Step6_Modules(WizardBaseView):
         self.add_item(select)
         self._select = select
 
+        continue_button = discord.ui.Button(label="Continue", style=discord.ButtonStyle.success, row=1)
+        continue_button.callback = self._on_continue
+        self.add_item(continue_button)
+
     async def _on_select(self, interaction: discord.Interaction):
-        self.state.modules = list(self._select.values)  # may be [] if admin deselects everything
+        # Only updates the in-progress selection (may legitimately be [] if the
+        # admin deselects everything) — does NOT finish the wizard, so toggling
+        # modules off and then clicking Continue works as expected.
+        self.state.modules = list(self._select.values)
+        chosen = ", ".join(self.state.modules) if self.state.modules else "*none*"
+        await interaction.response.edit_message(
+            content=(
+                "**🛠️ Server Setup — Step 6/6**\n"
+                f"Selected modules: {chosen}\n\n"
+                "Click **Continue** below to finish setup (or keep adjusting the selection above)."
+            ),
+            view=self,
+        )
+
+    async def _on_continue(self, interaction: discord.Interaction):
         await _finish_setup(interaction, self.state)
 
 
@@ -489,6 +516,245 @@ async def setup_reset_error(interaction: discord.Interaction, error: app_command
     else:
         print(f"Unhandled error in /setup_reset: {error}")
         msg = "❌ Something went wrong resetting setup."
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
+# ---------------------------------------------------------------------------
+# /settings — edit ONE field at a time, without resetting everything else.
+# Unlike /setup, this is NOT a one-time/locked command — it can be run
+# repeatedly. It updates a single column in guild_config directly via SQL
+# rather than touching the rest of the row.
+# ---------------------------------------------------------------------------
+
+def update_guild_config_field(guild_id: int, column: str, value) -> None:
+    """`column` must be a hardcoded value from this module (never built from
+    user input) since it's interpolated into the SQL — see call sites below,
+    all of which pass a fixed string literal."""
+    import sqlite3
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(f"UPDATE guild_config SET {column} = ? WHERE guild_id = ?", (str(value), str(guild_id)))
+    conn.commit()
+    conn.close()
+
+
+class SettingsFieldPicker(discord.ui.View):
+    """First screen of /settings: choose WHICH field to edit."""
+
+    def __init__(self, author_id: int, timeout: float = 120):
+        super().__init__(timeout=timeout)
+        self.author_id = author_id
+
+        select = discord.ui.Select(
+            placeholder="Choose a setting to change...",
+            options=[
+                discord.SelectOption(label="Main command channel", value="main_channel", emoji="📌"),
+                discord.SelectOption(label="Logs channel", value="logs_channel", emoji="🛡️"),
+                discord.SelectOption(label="Timezone", value="timezone", emoji="🕒"),
+                discord.SelectOption(label="Language", value="language", emoji="🌐"),
+                discord.SelectOption(label="Bot-admin role", value="admin_role", emoji="👑"),
+                discord.SelectOption(label="Modules", value="modules", emoji="🧩"),
+            ],
+        )
+        select.callback = self._on_select
+        self.add_item(select)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "❌ Only the admin who ran this command can use these controls.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def _on_select(self, interaction: discord.Interaction):
+        field = interaction.data["values"][0]
+
+        if field == "main_channel":
+            view = _SingleChannelEditor(self.author_id, "main_channel", "Main command channel")
+            await interaction.response.edit_message(content="Choose the new **main command channel**:", view=view)
+        elif field == "logs_channel":
+            view = _SingleChannelEditor(self.author_id, "logs_channel", "Logs channel")
+            await interaction.response.edit_message(content="Choose the new **logs channel**:", view=view)
+        elif field == "timezone":
+            view = _SingleSelectEditor(self.author_id, "timezone", TIMEZONE_CHOICES, "Timezone")
+            await interaction.response.edit_message(content="Choose the new **timezone**:", view=view)
+        elif field == "language":
+            view = _SingleSelectEditor(self.author_id, "language", LANGUAGE_CHOICES, "Language")
+            await interaction.response.edit_message(content="Choose the new **language**:", view=view)
+        elif field == "admin_role":
+            view = _SingleRoleEditor(self.author_id)
+            await interaction.response.edit_message(content="Choose the new **bot-admin role**:", view=view)
+        elif field == "modules":
+            view = _ModulesEditor(self.author_id, interaction.guild_id)
+            await interaction.response.edit_message(content="Update **enabled modules**:", view=view)
+
+
+class _SingleChannelEditor(discord.ui.View):
+    def __init__(self, author_id: int, column: str, label: str, timeout: float = 120):
+        super().__init__(timeout=timeout)
+        self.author_id = author_id
+        self.column = column
+        self.label = label
+        select = discord.ui.ChannelSelect(
+            placeholder=f"Choose the new {label.lower()}...",
+            channel_types=[discord.ChannelType.text],
+            min_values=1,
+            max_values=1,
+        )
+        select.callback = self._on_select
+        self.add_item(select)
+        self._select = select
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "❌ Only the admin who ran this command can use these controls.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def _on_select(self, interaction: discord.Interaction):
+        channel = self._select.values[0]
+        update_guild_config_field(interaction.guild_id, self.column, channel.id)
+        await interaction.response.edit_message(content=f"✅ {self.label} updated to {channel.mention}.", view=None)
+
+
+class _SingleRoleEditor(discord.ui.View):
+    def __init__(self, author_id: int, timeout: float = 120):
+        super().__init__(timeout=timeout)
+        self.author_id = author_id
+        select = discord.ui.RoleSelect(placeholder="Choose the new bot-admin role...", min_values=1, max_values=1)
+        select.callback = self._on_select
+        self.add_item(select)
+        self._select = select
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "❌ Only the admin who ran this command can use these controls.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def _on_select(self, interaction: discord.Interaction):
+        role = self._select.values[0]
+        update_guild_config_field(interaction.guild_id, "admin_role", role.id)
+        await interaction.response.edit_message(content=f"✅ Bot-admin role updated to {role.mention}.", view=None)
+
+
+class _SingleSelectEditor(discord.ui.View):
+    """Generic single-choice-dropdown editor, used for timezone and language."""
+
+    def __init__(self, author_id: int, column: str, options: List[discord.SelectOption], label: str, timeout: float = 120):
+        super().__init__(timeout=timeout)
+        self.author_id = author_id
+        self.column = column
+        self.label = label
+        select = discord.ui.Select(placeholder=f"Choose the new {label.lower()}...", options=options, min_values=1, max_values=1)
+        select.callback = self._on_select
+        self.add_item(select)
+        self._select = select
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "❌ Only the admin who ran this command can use these controls.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def _on_select(self, interaction: discord.Interaction):
+        value = self._select.values[0]
+        update_guild_config_field(interaction.guild_id, self.column, value)
+        if self.column == "language":
+            translator.set_guild_language(interaction.guild_id, value)  # keep the i18n cache in sync immediately
+        await interaction.response.edit_message(content=f"✅ {self.label} updated to `{value}`.", view=None)
+
+
+class _ModulesEditor(discord.ui.View):
+    """Same explicit-Continue-button pattern as Step6_Modules in /setup —
+    so an admin can genuinely disable every module, not just pick from a list."""
+
+    def __init__(self, author_id: int, guild_id: int, timeout: float = 120):
+        super().__init__(timeout=timeout)
+        self.author_id = author_id
+        self.guild_id = guild_id
+        self._selected: List[str] = self._load_current_modules(guild_id)
+
+        select = discord.ui.Select(
+            placeholder="Toggle modules...",
+            options=[
+                discord.SelectOption(label=opt.label, value=opt.value, description=opt.description,
+                                      default=(opt.value in self._selected))
+                for opt in MODULE_CHOICES
+            ],
+            min_values=0,
+            max_values=len(MODULE_CHOICES),
+        )
+        select.callback = self._on_select
+        self.add_item(select)
+        self._select = select
+
+        save_button = discord.ui.Button(label="Save", style=discord.ButtonStyle.success, row=1)
+        save_button.callback = self._on_save
+        self.add_item(save_button)
+
+    @staticmethod
+    def _load_current_modules(guild_id: int) -> List[str]:
+        import sqlite3
+        conn = sqlite3.connect(DB_PATH)
+        row = conn.execute("SELECT modules FROM guild_config WHERE guild_id=?", (str(guild_id),)).fetchone()
+        conn.close()
+        if row and row[0]:
+            try:
+                return json.loads(row[0])
+            except json.JSONDecodeError:
+                return []
+        return []
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "❌ Only the admin who ran this command can use these controls.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def _on_select(self, interaction: discord.Interaction):
+        self._selected = list(self._select.values)
+        chosen = ", ".join(self._selected) if self._selected else "*none*"
+        await interaction.response.edit_message(content=f"Selected modules: {chosen}\n\nClick **Save** to confirm.", view=self)
+
+    async def _on_save(self, interaction: discord.Interaction):
+        update_guild_config_field(self.guild_id, "modules", json.dumps(self._selected))
+        chosen = ", ".join(self._selected) if self._selected else "*none*"
+        await interaction.response.edit_message(content=f"✅ Modules updated: {chosen}", view=None)
+
+
+@app_commands.command(name="settings", description="Change a single server setting without resetting everything (admin only).")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.guild_only()
+async def settings(interaction: discord.Interaction):
+    if not is_guild_configured(interaction.guild_id):
+        await interaction.response.send_message(
+            "❌ This server hasn't been configured yet. Run `/setup` first.", ephemeral=True
+        )
+        return
+
+    view = SettingsFieldPicker(author_id=interaction.user.id)
+    await interaction.response.send_message("⚙️ Which setting would you like to change?", view=view, ephemeral=True)
+
+
+@settings.error
+async def settings_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        msg = "❌ You need the **Administrator** permission to change settings."
+    else:
+        print(f"Unhandled error in /settings: {error}")
+        msg = "❌ Something went wrong opening settings."
     if interaction.response.is_done():
         await interaction.followup.send(msg, ephemeral=True)
     else:
