@@ -19,6 +19,26 @@
     "absent_list_header": "📊 **Top absences on {world} world, based on {report_count} report numbers:**",
     "no_absences": "None of inactive players."
   },
+  "worlds": {
+    "added": "✅ World added successfully {world} with assigned channel {channel}.",
+    "deleted": "🗑️ Deleted world {world} (and its members/reports/absences). Do you feel like Thanos, the destroyer of worlds?",
+    "list_header": "🌍 Worlds:",
+    "list_empty": "There is no added worlds."
+  },
+  "members": {
+    "added": "✅ The number of lambs of God has increased.",
+    "deleted": "🗑️ {nick} has been kicked out of the guild.",
+    "list_empty": "👻 Member list is empty.",
+    "list_title": "📜 Member list: {world}",
+    "list_footer": "Total number of members: {count}"
+  },
+  "reports": {
+    "withdrawn": "⏪ The latest report has been withdrawn.",
+    "none_found": "❌ No reports were found for this world.",
+    "absence_added": "➕ Added absence for {nick}.",
+    "absence_deleted": "➖ Deleted absence from {nick} member.",
+    "all_cleared": "💥 The absence database and the report counter have been cleared for this server."
+  },
   "security": {
     "phishing_blocked": "🛡️ **A dangerous link has been blocked!** {mention} tried to send a SCAM.",
     "scam_image_blocked": "🛡️ **Suspicious scam image blocked!** {mention}'s attachment matched known scam patterns."
