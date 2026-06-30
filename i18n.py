@@ -1,186 +1,229 @@
 """
-command_i18n.py
-================
-Localizes slash COMMAND METADATA (names, descriptions, parameter
-descriptions) — the text shown in Discord's "/" command picker.
+i18n.py
+=======
+Internationalization (i18n) system for the bot.
 
-THIS IS A DIFFERENT SYSTEM FROM i18n.py — READ THIS FIRST:
+FOLDER STRUCTURE:
+    locales/
+        en_US.json   <- default / fallback language. Must always exist and
+                        contain every key the bot uses — it's the safety net.
+        pl_PL.json
+        de_DE.json
+        ... add more by dropping in a new locales/<code>.json file.
 
-    i18n.py (Translator / get_text)
-        Translates messages the BOT SENDS (replies, embeds, log entries).
-        Driven by YOUR `guild_config.language` column — one language per
-        SERVER, set via /setup. You call it yourself: translator.get_text(...).
-
-    command_i18n.py (CommandTranslator, this file)
-        Translates the command PICKER ITSELF — the name/description users
-        see when they type "/" and browse commands, before they've even run
-        anything. Driven by DISCORD'S OWN per-USER client language setting
-        (Settings -> Language in the Discord app) — every user can see
-        command names in their own language, even within the same server.
-        You never call this directly; discord.py calls it automatically
-        at CommandTree.sync() time, once per locale, for every command.
-
-    Practical consequence: a Polish admin and a German admin in the SAME
-    server (whose guild_config.language is, say, "en_US") will each see
-    "/wg_worlds" with a description in their OWN client language in the
-    picker — but the bot's actual reply text will be in the server's
-    configured language. Both systems are correct to use together.
-
-DISCORD'S LOCALE CODES ARE NOT THE SAME AS guild_config'S CODES:
-    Discord uses its own short codes (discord.Locale): "en-US", "en-GB",
-    "pl", "de", "fr", "ja", etc. Note "pl" and "de" have NO region suffix,
-    unlike your message locales "pl_PL" / "de_DE". This module's locale
-    files therefore live in their own folder (locales/commands/) keyed by
-    Discord's codes, e.g. locales/commands/pl.json, NOT locales/commands/pl_PL.json.
-    Full list: https://discord.com/developers/docs/reference#locales
-
-FILE STRUCTURE:
-    locales/commands/
-        en-US.json   <- default / fallback, must be complete
-        pl.json
-        de.json
-
-JSON STRUCTURE (keyed by command name, matching the `name=` you pass to
-@bot.tree.command):
+JSON STRUCTURE (nested by feature area, dot-notation key access):
     {
-      "wg_worlds": {
-        "description": "List of the worlds"
+      "setup": {
+        "main_channel_set": "✅ Main channel set to {channel}."
       },
-      "wg_add_member": {
-        "description": "Assign players to a world",
-        "options": {
-          "swiat": "World name",
-          "lista": "Player nicknames, separated by commas or new lines"
-        }
+      "errors": {
+        "no_permission": "❌ You need the **{permission}** permission to use this command."
       }
     }
+    -> get_text(guild_id, "setup.main_channel_set", channel="#general")
+    -> get_text(guild_id, "errors.no_permission", permission="Administrator")
 
-INTEGRATION (in your main bot file, in setup_hook, BEFORE tree.sync()):
+INTEGRATION (in your main bot file):
+    from i18n import translator
 
-    from command_i18n import CommandTranslator
+    # in setup_hook, before tree.sync() — language IDs in guild_config must
+    # already exist as locale files by the time the bot starts handling events:
+    #   (nothing to call here — `translator` loads its files at import time,
+    #    see the singleton at the bottom of this module)
 
-    async def setup_hook(self):
-        ...
-        await self.tree.set_translator(CommandTranslator())
-        await self.tree.sync()
+    # in setup_wizard.py, after a guild finishes the wizard:
+    translator.set_guild_language(state.guild_id, state.language)
 
-NOTHING ELSE CHANGES IN YOUR COMMAND DEFINITIONS. Because discord.py's
-`auto_locale_strings` defaults to True, the plain `description="..."` you
-already pass to @bot.tree.command and the parameter docs you'd add via
-@app_commands.describe(...) are automatically eligible for translation —
-you do not need to wrap them in `locale_str(...)` yourself.
+USAGE — see the bottom of this file for full inline examples covering both
+an app_commands.Command and an event listener.
 """
 
 import json
 import logging
+import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import discord
-from discord import app_commands
+logger = logging.getLogger("i18n")
 
-logger = logging.getLogger("command_i18n")
-
-DEFAULT_DISCORD_LOCALE = "en-US"
-COMMAND_LOCALES_DIR = Path(__file__).parent / "locales" / "commands"
+DEFAULT_LANGUAGE = "en_US"
+LOCALES_DIR = Path(__file__).parent / "locales"
+DB_PATH = "gildia.db"
 
 
-class CommandTranslator(app_commands.Translator):
+class Translator:
     """
-    discord.py calls `.translate(...)` once per command/parameter/locale
-    combination at sync() time — not per-interaction — so this is cheap
-    even with many locales.
+    Loads every locale JSON file into memory ONCE (at construction time —
+    not per-message, not per-command), caches each guild's chosen language
+    so the language lookup is a single DB read per guild rather than per
+    message, and resolves dotted translation keys (e.g. "errors.no_permission")
+    with automatic fallback to DEFAULT_LANGUAGE when a key — or an entire
+    locale file — is missing.
     """
 
-    def __init__(self, locales_dir: Path = COMMAND_LOCALES_DIR, default_locale: str = DEFAULT_DISCORD_LOCALE) -> None:
-        self.default_locale = default_locale
-        self._data: Dict[str, Dict[str, Any]] = {}
-        self._load_all(locales_dir)
+    def __init__(self, locales_dir: Path = LOCALES_DIR, default_language: str = DEFAULT_LANGUAGE) -> None:
+        self.default_language: str = default_language
+        self._translations: Dict[str, Dict[str, Any]] = {}
+        self._guild_language_cache: Dict[int, str] = {}
+        self._load_all_locales(locales_dir)
 
-    def _load_all(self, locales_dir: Path) -> None:
+    # ------------------------------------------------------------------
+    # LOADING — happens once, at startup
+    # ------------------------------------------------------------------
+    def _load_all_locales(self, locales_dir: Path) -> None:
+        """Reads every *.json file in locales_dir into memory exactly once."""
         if not locales_dir.exists():
-            raise FileNotFoundError(f"Command locales directory not found: {locales_dir}")
+            raise FileNotFoundError(f"Locales directory not found: {locales_dir}")
 
         for path in sorted(locales_dir.glob("*.json")):
-            locale_code = path.stem  # "pl.json" -> "pl", "en-US.json" -> "en-US"
+            language_code = path.stem  # "en_US.json" -> "en_US"
             try:
                 with open(path, "r", encoding="utf-8") as f:
-                    self._data[locale_code] = json.load(f)
-                logger.info(f"Loaded command locale '{locale_code}' from {path.name}")
+                    self._translations[language_code] = json.load(f)
+                logger.info(f"Loaded locale '{language_code}' from {path.name}")
             except (json.JSONDecodeError, OSError) as e:
-                logger.error(f"Failed to load command locale file {path}: {e}")
+                logger.error(f"Failed to load locale file {path}: {e}")
 
-        if self.default_locale not in self._data:
+        if self.default_language not in self._translations:
             raise RuntimeError(
-                f"Default command locale '{self.default_locale}' has no file in {locales_dir}."
+                f"Default language '{self.default_language}' has no locale file in {locales_dir}. "
+                "The fallback mechanism requires it to exist."
             )
 
+    def reload(self, locales_dir: Path = LOCALES_DIR) -> None:
+        """Hot-reload every translation file without restarting the bot
+        (handy after editing copy — wire this to an owner-only debug command if useful)."""
+        self._translations.clear()
+        self._load_all_locales(locales_dir)
+
     # ------------------------------------------------------------------
-    # discord.py's required override
+    # GUILD LANGUAGE — DB-backed, cached so we don't query per message
     # ------------------------------------------------------------------
-    async def translate(
-        self,
-        string: app_commands.locale_str,
-        locale: discord.Locale,
-        context: app_commands.TranslationContext,
-    ) -> Optional[str]:
-        """
-        Returning None tells discord.py "no translation available, keep the
-        original string" — that's the correct fallback here (rather than
-        manually re-implementing English text), since the original string
-        IS the English text we wrote in the @command/@describe decorators.
-        """
-        locale_code = locale.value  # discord.Locale -> "pl", "de", "en-US", ...
-        if locale_code not in self._data:
-            return None  # we don't have this language at all -> Discord shows the original
+    def get_guild_language(self, guild_id: int) -> str:
+        """Returns the guild's configured language. Hits the DB only on a cache miss."""
+        cached = self._guild_language_cache.get(guild_id)
+        if cached is not None:
+            return cached
 
-        command_name, field = self._resolve_field_path(context)
-        if command_name is None or field is None:
-            return None  # context we don't have a mapping for (e.g. choice names) -> leave as-is
+        language = self._fetch_language_from_db(guild_id)
+        self._guild_language_cache[guild_id] = language
+        return language
 
-        entry = self._data[locale_code].get(command_name)
-        if entry is None:
-            logger.warning(f"No '{command_name}' entry in command locale '{locale_code}', falling back.")
-            return None
+    def _fetch_language_from_db(self, guild_id: int) -> str:
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            row = conn.execute(
+                "SELECT language FROM guild_config WHERE guild_id = ?", (str(guild_id),)
+            ).fetchone()
+        finally:
+            conn.close()
 
-        if field == "description":
-            return entry.get("description")  # None -> discord.py falls back to original automatically
+        if row and row[0] and row[0] in self._translations:
+            return row[0]
+        return self.default_language  # unconfigured guild, or a language code we don't have a file for
 
-        # field is an option/parameter name
-        option_name = field
-        options = entry.get("options", {})
-        translated = options.get(option_name)
-        if translated is None:
-            logger.warning(
-                f"No translation for option '{option_name}' of command '{command_name}' "
-                f"in locale '{locale_code}', falling back to original."
-            )
-        return translated
+    def set_guild_language(self, guild_id: int, language_code: str) -> None:
+        """Call this immediately whenever a guild's language changes (e.g. right
+        after /setup saves it, or from a future /language command) — otherwise
+        the cache keeps serving the old value until it happens to expire/restart."""
+        self._guild_language_cache[guild_id] = (
+            language_code if language_code in self._translations else self.default_language
+        )
 
+    def invalidate_guild_cache(self, guild_id: int) -> None:
+        """Forces the next lookup for this guild to re-read the DB instead of the cache."""
+        self._guild_language_cache.pop(guild_id, None)
+
+    # ------------------------------------------------------------------
+    # KEY RESOLUTION
+    # ------------------------------------------------------------------
     @staticmethod
-    def _resolve_field_path(context: app_commands.TranslationContext):
+    def _resolve_key(translations: Dict[str, Any], dotted_key: str) -> Optional[str]:
+        """Walks a dotted key like 'errors.no_permission' through nested dicts."""
+        node: Any = translations
+        for part in dotted_key.split("."):
+            if not isinstance(node, dict) or part not in node:
+                return None
+            node = node[part]
+        return node if isinstance(node, str) else None
+
+    def get_raw_or_none(self, language_code: str, key: str) -> Optional[str]:
+        """Looks up `key` in exactly the given language — no fallback, no
+        formatting. Returns None if missing. Used by CommandTranslator
+        (command_translator.py), where None has a specific meaning to
+        discord.py: 'no localization for this locale, show the literal
+        default text instead' — Discord handles that fallback itself."""
+        return self._resolve_key(self._translations.get(language_code, {}), key)
+
+    def get_text(self, guild_id: int, key: str, **kwargs: Any) -> str:
         """
-        Maps a TranslationContext to (command_name, field) so translate()
-        above can do a flat dict lookup. Returns (None, None) for contexts
-        this implementation doesn't handle (e.g. choice names, group
-        descriptions) — discord.py will just keep the original text for those.
+        Main entry point. Resolves `key` in the guild's language, formats it
+        with kwargs, and falls back to the default language if the key is
+        missing there — or to a visibly-broken placeholder if it's missing
+        from every locale (so a typo'd key is obvious in testing instead of
+        silently rendering blank text in production).
         """
-        location = context.location
-        data = context.data
+        language = self.get_guild_language(guild_id)
 
-        if location is app_commands.TranslationContextLocation.command_description:
-            # data is the Command object itself
-            return getattr(data, "name", None), "description"
+        text = self._resolve_key(self._translations.get(language, {}), key)
+        if text is None and language != self.default_language:
+            logger.warning(f"Missing key '{key}' in locale '{language}' — falling back to '{self.default_language}'.")
+            text = self._resolve_key(self._translations.get(self.default_language, {}), key)
 
-        if location is app_commands.TranslationContextLocation.parameter_description:
-            # data is a Parameter; data.command is its owning Command
-            command = getattr(data, "command", None)
-            command_name = getattr(command, "name", None) if command else None
-            param_name = getattr(data, "name", None)
-            return command_name, param_name
+        if text is None:
+            logger.error(f"Missing key '{key}' in every locale, including the default.")
+            return f"[[{key}]]"
 
-        # command_name / parameter_name / group_* / choice_name are intentionally
-        # NOT translated here — command and parameter NAMES (not descriptions)
-        # must stay stable identifiers Discord can route reliably, and choices
-        # aren't used anywhere in this bot yet.
-        return None, None
+        try:
+            return text.format(**kwargs)
+        except KeyError as e:
+            logger.error(f"Translation '{key}' ({language}) expects placeholder {e}, but it wasn't supplied.")
+            return text  # show unformatted text rather than crash the calling command
+
+
+# ---------------------------------------------------------------------------
+# SINGLETON — instantiated at import time, so "loaded when the bot starts"
+# means exactly that: this line runs as part of `import i18n`, before
+# setup_hook or any event handler fires.
+# ---------------------------------------------------------------------------
+translator = Translator()
+
+
+# ---------------------------------------------------------------------------
+# USAGE EXAMPLES (for reference — not executed)
+# ---------------------------------------------------------------------------
+"""
+--- Inside an app_commands.Command (slash command) ---
+
+    from i18n import translator
+
+    @bot.tree.command(name="wg_absent_list", description="List of absences")
+    async def wg_absent_list(interaction: discord.Interaction, swiat: str):
+        if not await sprawdz_pozwolenie(interaction):
+            return
+        ...
+        if not swiat_data:
+            await interaction.followup.send(
+                translator.get_text(interaction.guild_id, "wg.unknown_world")
+            )
+            return
+
+
+--- Inside an event listener (on_message) ---
+
+    from i18n import translator
+
+    @bot.event
+    async def on_message(message: discord.Message):
+        ...
+        if await is_malicious_domain(domena, session):
+            await message.delete()
+            await message.channel.send(
+                translator.get_text(
+                    message.guild.id,
+                    "security.phishing_blocked",
+                    mention=message.author.mention,
+                ),
+                delete_after=10,
+            )
+"""
