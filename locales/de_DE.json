@@ -15,9 +15,11 @@
     "unknown_world": "❌ Unbekannte Welt.",
     "report_sent": "✅ Bericht wurde an {channel} gesendet.",
     "absent_list_header": "📊 **Meiste Abwesenheiten in der Welt {world}, basierend auf {report_count} Berichten:**",
-    "no_absences": "Keine inaktiven Spieler."
+    "no_absences": "Keine inaktiven Spieler.",
+    "full_attendance": "Niemand — volle Anwesenheit! 🎉"
   },
   "security": {
-    "phishing_blocked": "🛡️ **Ein gefährlicher Link wurde blockiert!** {mention} hat versucht, einen SCAM zu senden."
+    "phishing_blocked": "🛡️ **Ein gefährlicher Link wurde blockiert!** {mention} hat versucht, einen SCAM zu senden.",
+    "scam_image_blocked": "🛡️ **Verdächtiges Scam-Bild blockiert!** Der Anhang von {mention} entspricht bekannten Betrugsmustern."
   }
 }
