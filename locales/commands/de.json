@@ -73,16 +73,20 @@
     "description": "Testet die Verbindung des Bots zu SFDataHub"
   },
   "wg_set_ranking": {
-    "description": "Automatisches wöchentliches Abwesenheits-Ranking konfigurieren oder deaktivieren",
+    "description": "Automatisches wöchentliches Abwesenheits-Ranking für eine Welt konfigurieren oder deaktivieren",
     "options": {
-      "enabled": "Automatisches wöchentliches Ranking ein- oder ausschalten",
+      "swiat": "Welt, für die dieser Zeitplan gilt",
+      "enabled": "Automatisches wöchentliches Ranking für diese Welt ein- oder ausschalten",
       "weekday": "Wochentag für die Veröffentlichung (nur relevant, wenn aktiviert)",
       "hour": "Stunde, 24-Stunden-Format (nur relevant, wenn aktiviert)",
       "minute": "Minute (nur relevant, wenn aktiviert)"
     }
   },
   "wg_ranking_status": {
-    "description": "Den aktuellen automatischen Ranking-Zeitplan anzeigen"
+    "description": "Den aktuellen automatischen Ranking-Zeitplan anzeigen",
+    "options": {
+      "swiat": "Nur den Zeitplan dieser Welt anzeigen (weglassen für alle)"
+    }
   },
   "settings": {
     "description": "Eine einzelne Servereinstellung ändern, ohne alles zurückzusetzen (nur Admin)."
