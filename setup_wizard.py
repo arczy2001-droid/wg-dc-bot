@@ -29,6 +29,8 @@ from typing import List, Optional
 import discord
 from discord import app_commands
 
+from i18n import translator
+
 DB_PATH = "gildia.db"
 
 # ---------------------------------------------------------------------------
@@ -115,6 +117,14 @@ class WizardState:
 # ---------------------------------------------------------------------------
 # OPTION CATALOGS — extend these as the bot grows
 # ---------------------------------------------------------------------------
+# value is a locale code matching a locales/{code}.json file exactly
+# (see i18n.py) — keeps this aligned with the translation system, not just
+# a generic ISO 639-1 code.
+LANGUAGE_CHOICES = [
+    discord.SelectOption(label="English", value="en_US", emoji="🇬🇧"),
+    discord.SelectOption(label="Polski", value="pl_PL", emoji="🇵🇱"),
+    discord.SelectOption(label="Deutsch", value="de_DE", emoji="🇩🇪"),
+]
 
 TIMEZONE_CHOICES = [
     discord.SelectOption(label="UTC", value="UTC", description="Coordinated Universal Time"),
@@ -125,12 +135,7 @@ TIMEZONE_CHOICES = [
     discord.SelectOption(label="PST", value="PST", description="US Pacific Time (UTC-8)"),
 ]
 
-# value is an ISO language code — keeps this ready for real i18n later
-# (e.g. a `translations/{code}.json` lookup keyed on this exact value).
-LANGUAGE_CHOICES = [
-    discord.SelectOption(label="English", value="en", emoji="🇬🇧"),
-    discord.SelectOption(label="Polski", value="pl", emoji="🇵🇱"),
-]
+
 
 # Add future modules here — the multi-select grows automatically since
 # max_values is derived from len(MODULE_CHOICES) below.
@@ -378,6 +383,7 @@ async def _finish_setup(interaction: discord.Interaction, state: WizardState) ->
     # kept simple here per the requested scope.
     api_token = secrets.token_urlsafe(32)
     save_guild_config(state, api_token)
+    translator.set_guild_language(state.guild_id, state.language)
 
     summary = (
         "**✅ Setup complete!**\n"
