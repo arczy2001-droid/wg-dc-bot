@@ -34,7 +34,8 @@
   "wg": {
     "description": "Aktivitätsbericht hochladen",
     "options": {
-      "swiat": "Weltname"
+      "swiat": "Weltname",
+      "screen": "Screenshot der Kampf-/Aktivitätsliste"
     }
   },
   "wg_absent_list": {
@@ -61,5 +62,14 @@
   },
   "setup": {
     "description": "Den einmaligen Server-Einrichtungsassistenten ausführen (nur Admin)."
+  },
+  "setup_reset": {
+    "description": "Konfiguration entsperren, damit /setup erneut ausgeführt werden kann (nur Admin)."
+  },
+  "wg_clear_all": {
+    "description": "Alle Abwesenheitsberichte löschen (nur dieser Server)"
+  },
+  "test_scrapera": {
+    "description": "Testet die Verbindung des Bots zu SFDataHub"
   }
 }
