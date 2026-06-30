@@ -467,7 +467,6 @@ WEEKDAY_CHOICES = [
 WEEKDAY_NAMES = {c.value: c.name for c in WEEKDAY_CHOICES}
 
 @bot.tree.command(name="wg_set_ranking", description="Configure or disable the automatic weekly absence ranking")
-@app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.choices(weekday=WEEKDAY_CHOICES)
 @app_commands.describe(
     enabled="Turn the automatic weekly ranking on or off",
