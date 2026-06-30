@@ -194,7 +194,9 @@ async def wg_add_world(interaction: discord.Interaction, nazwa: str, kanal: disc
         (str(interaction.guild_id), nazwa.lower(), str(kanal.id))
     )
     conn.commit(); conn.close()
-    await interaction.response.send_message(f"✅ World added successfully {nazwa} with assigned channel <#{kanal.id}>.")
+    await interaction.response.send_message(
+        translator.get_text(interaction.guild_id, "worlds.added", world=nazwa, channel=kanal.mention)
+    )
 
 @bot.tree.command(name="wg_delete_world", description="Deleting world")
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -209,7 +211,9 @@ async def wg_delete_world(interaction: discord.Interaction, nazwa: str):
     cur.execute("DELETE FROM raporty WHERE guild_id=? AND swiat=?", (gid, nazwa.lower()))
     cur.execute("DELETE FROM nieobecnosci WHERE guild_id=? AND swiat=?", (gid, nazwa.lower()))
     conn.commit(); conn.close()
-    await interaction.response.send_message(f"🗑️ Deleted world {nazwa} (and its members/reports/absences). Do you feel like Thanos, the destroyer of worlds? ")
+    await interaction.response.send_message(
+        translator.get_text(interaction.guild_id, "worlds.deleted", world=nazwa)
+    )
 
 @bot.tree.command(name="wg_worlds", description="List of the worlds")
 async def wg_worlds(interaction: discord.Interaction):
@@ -219,8 +223,10 @@ async def wg_worlds(interaction: discord.Interaction):
         "SELECT nazwa, kanal_id FROM swiaty WHERE guild_id=?", (str(interaction.guild_id),)
     ).fetchall()
     conn.close()
-    txt = "\n".join([f"{r[0]} -> <#{r[1]}>" for r in res]) if res else "There is no added worlds."
-    await interaction.response.send_message(f"🌍 Worlds:\n{txt}")
+    list_empty_text = translator.get_text(interaction.guild_id, "worlds.list_empty")
+    txt = "\n".join([f"{r[0]} -> <#{r[1]}>" for r in res]) if res else list_empty_text
+    header = translator.get_text(interaction.guild_id, "worlds.list_header")
+    await interaction.response.send_message(f"{header}\n{txt}")
 
 @bot.tree.command(name="wg_add_member", description="Assign players to a world")
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -231,7 +237,7 @@ async def wg_add_member(interaction: discord.Interaction, swiat: str, lista: str
     for n in [x.strip() for x in re.split(r'[\n,]+', lista) if x.strip()]:
         conn.cursor().execute("INSERT OR IGNORE INTO czlonkowie VALUES (?, ?, ?)", (gid, swiat.lower(), n))
     conn.commit(); conn.close()
-    await interaction.response.send_message("✅ The number of lambs of God has increased.")
+    await interaction.response.send_message(translator.get_text(interaction.guild_id, "members.added"))
 
 @bot.tree.command(name="wg_delete_member", description="Deleting player")
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -243,7 +249,9 @@ async def wg_delete_member(interaction: discord.Interaction, swiat: str, nick: s
         (str(interaction.guild_id), swiat.lower(), nick)
     )
     conn.commit(); conn.close()
-    await interaction.response.send_message(f"🗑️ {nick} has been kicked out of the guild.")
+    await interaction.response.send_message(
+        translator.get_text(interaction.guild_id, "members.deleted", nick=nick)
+    )
 
 @bot.tree.command(name="wg_member_list", description="Member list:")
 async def wg_member_list(interaction: discord.Interaction, swiat: str):
@@ -258,18 +266,21 @@ async def wg_member_list(interaction: discord.Interaction, swiat: str):
     conn.close()
 
     if not res:
-        await interaction.response.send_message("👻 Member list is empty."); return
+        await interaction.response.send_message(translator.get_text(interaction.guild_id, "members.list_empty")); return
 
     size = (len(res) + 2) // 3
     c1 = res[0:size]
     c2 = res[size:size*2]
     c3 = res[size*2:]
 
-    embed = discord.Embed(title=f"📜 Member list: {swiat.upper()}", color=discord.Color.blue())
+    embed = discord.Embed(
+        title=translator.get_text(interaction.guild_id, "members.list_title", world=swiat.upper()),
+        color=discord.Color.blue()
+    )
     embed.add_field(name="I", value="\n".join(c1) or "-", inline=True)
     embed.add_field(name="II", value="\n".join(c2) or "-", inline=True)
     embed.add_field(name="III", value="\n".join(c3) or "-", inline=True)
-    embed.set_footer(text=f"Total number of members: {len(res)}")
+    embed.set_footer(text=translator.get_text(interaction.guild_id, "members.list_footer", count=len(res)))
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="wg", description="Upload the activity report")
@@ -343,8 +354,10 @@ async def wg_absent_list(interaction: discord.Interaction, swiat: str):
     ).fetchall()
     conn.close()
 
-    txt = "\n".join([f"{r[0]}: {r[1]}x" for r in res]) if res else "None of inactive players."
-    naglowek = f"📊 **Top absences on {swiat.upper()} world, based on {liczba_raportow} report numbers:**"
+    txt = "\n".join([f"{r[0]}: {r[1]}x" for r in res]) if res else translator.get_text(interaction.guild_id, "wg.no_absences")
+    naglowek = translator.get_text(
+        interaction.guild_id, "wg.absent_list_header", world=swiat.upper(), report_count=liczba_raportow
+    )
 
     await interaction.followup.send(f"{naglowek}\n{txt}")
 
@@ -369,9 +382,9 @@ async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
             (gid, swiat.lower(), ostatnia_data)
         )
         conn.commit()
-        await interaction.response.send_message("⏪ The latest report has been withdrawn.")
+        await interaction.response.send_message(translator.get_text(interaction.guild_id, "reports.withdrawn"))
     else:
-        await interaction.response.send_message("❌ No reports were found for this world.")
+        await interaction.response.send_message(translator.get_text(interaction.guild_id, "reports.none_found"))
     conn.close()
 
 @bot.tree.command(name="wg_add_absent", description="Add single absence to a member")
@@ -384,7 +397,9 @@ async def wg_add_absent(interaction: discord.Interaction, swiat: str, nick: str)
         (str(interaction.guild_id), swiat.lower(), nick, datetime.now())
     )
     conn.commit(); conn.close()
-    await interaction.response.send_message(f"➕ Added absence for {nick}.")
+    await interaction.response.send_message(
+        translator.get_text(interaction.guild_id, "reports.absence_added", nick=nick)
+    )
 
 @bot.tree.command(name="wg_delete_absent", description="Delete single absence for a member")
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -399,7 +414,9 @@ async def wg_delete_absent(interaction: discord.Interaction, swiat: str, nick: s
         (str(interaction.guild_id), swiat.lower(), nick)
     )
     conn.commit(); conn.close()
-    await interaction.response.send_message(f"➖ Deleted absence from {nick} member.")
+    await interaction.response.send_message(
+        translator.get_text(interaction.guild_id, "reports.absence_deleted", nick=nick)
+    )
 
 @bot.tree.command(name="wg_clear_all", description="Clearing every absensce report (this server only)")
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -410,7 +427,7 @@ async def wg_clear_all(interaction: discord.Interaction):
     conn.cursor().execute("DELETE FROM nieobecnosci WHERE guild_id=?", (gid,))
     conn.cursor().execute("DELETE FROM raporty WHERE guild_id=?", (gid,))
     conn.commit(); conn.close()
-    await interaction.response.send_message("💥 The absence database and the report counter have been cleared for this server.")
+    await interaction.response.send_message(translator.get_text(interaction.guild_id, "reports.all_cleared"))
 
 @bot.tree.command(name="test_scrapera", description="Test połączenia bota z SFDataHub")
 async def test_scrapera(interaction: discord.Interaction):
