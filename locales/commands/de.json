@@ -90,5 +90,16 @@
   },
   "settings": {
     "description": "Eine einzelne Servereinstellung ändern, ohne alles zurückzusetzen (nur Admin)."
+  },
+  "sf_events_setup": {
+    "description": "Den Kanal festlegen, in dem offizielle Spiel-Event-Webhooks ankommen (nur Admin).",
+    "options": { "channel": "Der Kanal, der offizielle Spiel-News/Event-Webhooks empfängt" }
+  },
+  "sf_events_toggle": {
+    "description": "Das SF-Event-Tracking-Modul aktivieren oder deaktivieren (nur Admin).",
+    "options": { "state": "True zum Aktivieren, False zum Deaktivieren" }
+  },
+  "events": {
+    "description": "Aktuelle und bevorstehende In-Game-Events für dieses Wochenende anzeigen."
   }
 }
