@@ -91,6 +91,16 @@
   "settings": {
     "description": "Zmień jedno ustawienie serwera bez resetowania wszystkiego (tylko admin)."
   },
+  "wg_block_image": {
+    "description": "Ręcznie dodaj obraz do listy blokowanych scamów",
+    "options": {
+      "image": "Obraz do zablokowania",
+      "reason": "Powód blokowania (opcjonalnie)"
+    }
+  },
+  "wg_blocklist_stats": {
+    "description": "Pokaż liczbę obrazów na liście blokowanych scamów"
+  },
   "sf_events_setup": {
     "description": "Ustaw kanał, na którym pojawiają się webhooki z oficjalnymi wydarzeniami (tylko admin).",
     "options": { "channel": "Kanał, który odbiera oficjalne wiadomości/webhooki z wydarzeniami" }
