@@ -90,5 +90,16 @@
   },
   "settings": {
     "description": "Zmień jedno ustawienie serwera bez resetowania wszystkiego (tylko admin)."
+  },
+  "sf_events_setup": {
+    "description": "Ustaw kanał, na którym pojawiają się webhooki z oficjalnymi wydarzeniami (tylko admin).",
+    "options": { "channel": "Kanał, który odbiera oficjalne wiadomości/webhooki z wydarzeniami" }
+  },
+  "sf_events_toggle": {
+    "description": "Włącz lub wyłącz moduł śledzenia wydarzeń SF (tylko admin).",
+    "options": { "state": "True aby włączyć, False aby wyłączyć" }
+  },
+  "events": {
+    "description": "Pokaż aktualne i nadchodzące wydarzenia w grze na ten weekend."
   }
 }
