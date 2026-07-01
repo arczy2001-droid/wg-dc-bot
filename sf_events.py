@@ -1,0 +1,546 @@
+"""
+sf_events.py
+============
+Tracks in-game event schedules posted by official game webhooks and exposes
+a public /events command with full i18n support.
+
+HOW IT HOOKS INTO on_message (CRITICAL — READ THIS):
+
+    Discord's "Follow Channel" feature forwards messages via a Webhook.
+    Webhooks are flagged as bots (message.author.bot = True), so your
+    existing `if message.author.bot: return` guard would silently drop every
+    event announcement before this module sees it.
+
+    The solution: call `handle_event_webhook(message)` BEFORE that guard.
+    Only if it returns False (message was not a relevant event webhook) should
+    the normal bot-filter logic run.
+
+INTEGRATION (in gildia_bot.py):
+
+    from sf_events import (
+        init_sf_events_tables,
+        handle_event_webhook,
+        sf_events_setup,
+        sf_events_toggle,
+        events as events_command,
+    )
+
+    # in setup_hook, before tree.sync():
+    init_sf_events_tables()
+    self.tree.add_command(sf_events_setup)
+    self.tree.add_command(sf_events_toggle)
+    self.tree.add_command(events_command)
+
+    # in on_message, as the VERY FIRST thing — before `if message.author.bot`:
+    if await handle_event_webhook(message):
+        return   # was a webhook event message, already handled
+
+EXAMPLE WEBHOOK MESSAGE FORMAT this parser handles:
+
+    ⚔️ **Weekend Events** (26.06 - 28.06):
+    • Double Gold
+    • Sea Monster Invasion
+    • Treasure Hunt
+
+    Or without bullet points:
+    Weekend Events (26.06 - 28.06)
+    - Double Gold
+    - Raid Event
+    - Black Pearl Hunt
+
+    Date separators supported: -, –, —, /
+    Leading symbols on event lines: •, -, *, –, ▶, empty (plain text)
+"""
+
+import json
+import re
+import sqlite3
+from datetime import datetime, date
+from typing import Optional, List, Tuple
+
+import discord
+from discord import app_commands
+
+DB_PATH = "gildia.db"
+
+# ---------------------------------------------------------------------------
+# DATABASE
+# ---------------------------------------------------------------------------
+
+def init_sf_events_tables() -> None:
+    """Idempotent — safe to call on every startup."""
+    conn = sqlite3.connect(DB_PATH)
+    # Per-guild module config: which channel to listen on, and is it enabled?
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sf_events_config (
+            guild_id   TEXT PRIMARY KEY,
+            channel_id TEXT,
+            enabled    INTEGER NOT NULL DEFAULT 1
+        )
+    """)
+    # The parsed event schedule for each guild.
+    # event_name is always stored in English (the source language of the webhook).
+    # date_start / date_end are ISO-8601 strings (YYYY-MM-DD).
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sf_events (
+            guild_id   TEXT NOT NULL,
+            event_name TEXT NOT NULL,
+            date_start TEXT NOT NULL,
+            date_end   TEXT NOT NULL,
+            raw_date   TEXT NOT NULL,
+            updated_at TIMESTAMP NOT NULL,
+            PRIMARY KEY (guild_id, event_name)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def _get_config(guild_id: int) -> Optional[Tuple[str, bool]]:
+    """Returns (channel_id, enabled) or None if never configured."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT channel_id, enabled FROM sf_events_config WHERE guild_id = ?",
+        (str(guild_id),)
+    ).fetchone()
+    conn.close()
+    if row:
+        return row[0], bool(row[1])
+    return None
+
+
+def _save_events(guild_id: int, events: List[str], date_start: date, date_end: date, raw_date: str) -> None:
+    """Replaces the guild's current event schedule with the newly parsed one."""
+    conn = sqlite3.connect(DB_PATH)
+    now = datetime.now().isoformat()
+    # Remove previous schedule for this guild before inserting the new one,
+    # so stale events from last weekend don't linger if they weren't repeated.
+    conn.execute("DELETE FROM sf_events WHERE guild_id = ?", (str(guild_id),))
+    for name in events:
+        conn.execute(
+            """INSERT OR REPLACE INTO sf_events
+               (guild_id, event_name, date_start, date_end, raw_date, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (str(guild_id), name, date_start.isoformat(), date_end.isoformat(), raw_date, now)
+        )
+    conn.commit()
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# EVENT NAME TRANSLATIONS
+# ---------------------------------------------------------------------------
+# Keys are the English event names AS THEY APPEAR IN THE WEBHOOK (case-insensitive
+# match is applied, see _translate_event below).
+# Add new events here as you encounter them — the /events command will
+# automatically use the translation once added.
+
+EVENT_TRANSLATIONS: dict[str, dict[str, str]] = {
+    "Glorious Gold Galore": {
+        "pl_PL": "Złote zbiory",
+        "de_DE": "THere is no translation right now",
+    },
+    "Fantastic Fortress Festivity": {
+        "pl_PL": "Tango w Twierdzy",
+        "de_DE": "THere is no translation right now",
+    },
+    "Tidy Toilet Time": {
+        "pl_PL": "Sterylne Sedesy",
+        "de_DE": "THere is no translation right now",
+    },
+    "Lucky Day": {
+        "pl_PL": "Szczęśliwy Dzień",
+        "de_DE": "THere is no translation right now",
+    },
+    "Assembly of Awesome Animals": {
+        "pl_PL": "Zgromadzenie Zjawiskowej Zwierzyny",
+        "de_DE": "THere is no translation right now",
+    },
+    "Forge Frenzy Festival": {
+        "pl_PL": "Kocioł w Kuźni",
+        "de_DE": "THere is no translation right now",
+    },
+    "Days of Doomed Souls": {
+        "pl_PL": "Dni Diabelskich Dusz",
+        "de_DE": "THere is no translation right now",
+    },
+    "Witches' Dance": {
+        "pl_PL": "Wiedźmowy Taniec",
+        "de_DE": "THere is no translation right now",
+    },
+    "Exceptional XP Event": {
+        "pl_PL": "Prawdziwa Profuzja PD",
+        "de_DE": "THere is no translation right now",
+    },
+    "Sands of Time Special": {
+        "pl_PL": "Pięknych Piasków Czasu Czas",
+        "de_DE": "THere is no translation right now",
+    },
+    "Epic Quest Extravaganza": {
+        "pl_PL": "Epickie Zapotrzebowanie na Zadanie",
+        "de_DE": "THere is no translation right now",
+    },
+    "Rumble for Riches": {
+        "pl_PL": "Walka o Bogactwo",
+        "de_DE": "THere is no translation right now",
+    },
+    "Epic Good Luck Extravaganza": {
+        "pl_PL": "Epicki Festiwal Farciarzy",
+        "de_DE": "THere is no translation right now",
+    },
+    "Epic Shopping Spree Extravaganza": {
+        "pl_PL": "Epickie Szaleństwo Zakupowe",
+        "de_DE": "THere is no translation right now",
+    },
+    "Catalytic Kaboom": {
+        "pl_PL": "Brak tłumaczenia",
+        "de_DE": "THere is no translation right now",
+    },
+    "Piecework Party": {
+        "pl_PL": "Akordowa awanatura",
+        "de_DE": "THere is no translation right now",
+    },
+    "Crazy Mushroom Harvest": {
+        "pl_PL": "Szalone Grzybowe Żniwa",
+        "de_DE": "THere is no translation right now",
+    },
+}
+
+_TRANSLATIONS_LOWER = {k.lower(): v for k, v in EVENT_TRANSLATIONS.items()}
+
+
+def _translate_event(event_name: str, language: str) -> str:
+    """Returns the translated event name, or the original English if not found."""
+    entry = _TRANSLATIONS_LOWER.get(event_name.lower())
+    if entry and language in entry:
+        return entry[language]
+    return event_name  # graceful fallback — never shows a blank
+
+
+# ---------------------------------------------------------------------------
+# REGEX PARSING
+# ---------------------------------------------------------------------------
+
+# Matches date ranges like:  (26.06 - 28.06)  or  26.06 – 28.06  or  26.06/28.06
+# Groups: (1) start_day, (2) start_month, (3) end_day, (4) end_month
+_DATE_RANGE_RE = re.compile(
+    r'\(?\s*(\d{1,2})\.(\d{2})\s*[-–—/]\s*(\d{1,2})\.(\d{2})\s*\)?'
+)
+
+# Matches a line that starts with a bullet/dash/asterisk and has content.
+# Captures the event name after the leading symbol and optional whitespace.
+_BULLET_LINE_RE = re.compile(
+    r'^[\s]*[•\-\*–▶➤►][\s]+(.+)$',
+    re.MULTILINE
+)
+
+
+def _resolve_year(day: int, month: int) -> int:
+    """
+    Picks the correct year for a (day, month) pair so the date is always
+    in the near future: if the month has already passed this year, we assume
+    next year (handles Dec→Jan rollovers cleanly).
+    """
+    today = date.today()
+    candidate = date(today.year, month, day)
+    if candidate < today - __import__('datetime').timedelta(days=7):
+        candidate = date(today.year + 1, month, day)
+    return candidate.year
+
+
+def parse_event_message(content: str) -> Optional[Tuple[date, date, str, List[str]]]:
+    """
+    Attempts to extract a date range and event list from a webhook message.
+
+    Returns (date_start, date_end, raw_date_str, [event_names]) on success,
+    or None if the message doesn't look like an event schedule.
+    """
+    match = _DATE_RANGE_RE.search(content)
+    if not match:
+        return None
+
+    start_day, start_month, end_day, end_month = (int(x) for x in match.groups())
+    raw_date = match.group(0).strip("() ")
+
+    try:
+        year_start = _resolve_year(start_day, start_month)
+        year_end   = _resolve_year(end_day, end_month)
+        date_start = date(year_start, start_month, start_day)
+        date_end   = date(year_end,   end_month,   end_day)
+    except ValueError as e:
+        print(f"sf_events: invalid date in message ({raw_date}): {e}")
+        return None
+
+    # Try bullet-list format first
+    events = [m.group(1).strip() for m in _BULLET_LINE_RE.finditer(content)]
+
+    # Fallback: grab plain lines after the date pattern that aren't empty/headers
+    if not events:
+        after_date = content[match.end():]
+        for line in after_date.splitlines():
+            line = line.strip()
+            if line and not line.startswith(("**", "__", "#")):
+                events.append(line)
+
+    if not events:
+        return None
+
+    return date_start, date_end, raw_date, events
+
+
+# ---------------------------------------------------------------------------
+# WEBHOOK HOOK — called from on_message BEFORE the bot filter
+# ---------------------------------------------------------------------------
+
+async def handle_event_webhook(message: discord.Message) -> bool:
+    """
+    Main entry point called from on_message before `if message.author.bot`.
+
+    Returns True if this message was a relevant event webhook and was handled
+    (caller should `return` immediately after). Returns False for everything
+    else, so normal on_message processing continues.
+    """
+    if not message.guild:
+        return False
+
+    # Only care about actual webhooks (Follow Channel forwarding)
+    if not message.webhook_id:
+        return False
+
+    config = _get_config(message.guild.id)
+    if not config:
+        return False
+
+    channel_id, enabled = config
+    if not enabled:
+        return False
+
+    # Only process messages arriving in the designated events channel
+    if str(message.channel.id) != str(channel_id):
+        return False
+
+    content = message.content or ""
+    # Also check embeds — some webhooks put all content in an embed description
+    if not content and message.embeds:
+        content = "\n".join(
+            (e.description or "") + "\n" + "\n".join(f.value for f in e.fields)
+            for e in message.embeds
+        )
+
+    result = parse_event_message(content)
+    if not result:
+        return False  # message arrived in the channel but isn't an event schedule
+
+    date_start, date_end, raw_date, events = result
+    _save_events(message.guild.id, events, date_start, date_end, raw_date)
+
+    print(
+        f"sf_events: parsed {len(events)} events for guild {message.guild.id} "
+        f"({raw_date} -> {date_start} – {date_end})"
+    )
+    return True
+
+
+# ---------------------------------------------------------------------------
+# ADMIN COMMANDS
+# ---------------------------------------------------------------------------
+
+@app_commands.command(
+    name="sf_events_setup",
+    description="Set the channel where official game event webhooks arrive (admin only)."
+)
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.describe(channel="The channel that receives official game news/event webhooks")
+async def sf_events_setup(interaction: discord.Interaction, channel: discord.TextChannel):
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        """INSERT INTO sf_events_config (guild_id, channel_id, enabled)
+           VALUES (?, ?, 1)
+           ON CONFLICT(guild_id) DO UPDATE SET channel_id = excluded.channel_id""",
+        (str(interaction.guild_id), str(channel.id))
+    )
+    conn.commit()
+    conn.close()
+    await interaction.response.send_message(
+        f"✅ SF Events module set up. Watching {channel.mention} for event schedules.\n"
+        f"Use `/sf_events_toggle` to enable or disable the module at any time.",
+        ephemeral=True,
+    )
+
+
+@sf_events_setup.error
+async def sf_events_setup_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("❌ You need **Manage Server** permission for this.", ephemeral=True)
+    else:
+        print(f"sf_events_setup error: {error}")
+        await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
+
+
+@app_commands.command(
+    name="sf_events_toggle",
+    description="Enable or disable the SF events tracking module (admin only)."
+)
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.describe(state="True to enable, False to disable")
+async def sf_events_toggle(interaction: discord.Interaction, state: bool):
+    conn = sqlite3.connect(DB_PATH)
+    existing = conn.execute(
+        "SELECT 1 FROM sf_events_config WHERE guild_id = ?", (str(interaction.guild_id),)
+    ).fetchone()
+
+    if not existing:
+        conn.close()
+        await interaction.response.send_message(
+            "❌ Module not configured yet. Run `/sf_events_setup` first.",
+            ephemeral=True,
+        )
+        return
+
+    conn.execute(
+        "UPDATE sf_events_config SET enabled = ? WHERE guild_id = ?",
+        (1 if state else 0, str(interaction.guild_id))
+    )
+    conn.commit()
+    conn.close()
+
+    emoji = "✅" if state else "🔕"
+    status = "enabled" if state else "disabled"
+    await interaction.response.send_message(
+        f"{emoji} SF Events module is now **{status}** for this server.",
+        ephemeral=True,
+    )
+
+
+@sf_events_toggle.error
+async def sf_events_toggle_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("❌ You need **Manage Server** permission for this.", ephemeral=True)
+    else:
+        print(f"sf_events_toggle error: {error}")
+        await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
+
+
+# ---------------------------------------------------------------------------
+# PUBLIC /events COMMAND
+# ---------------------------------------------------------------------------
+
+def _get_guild_language(guild_id: int) -> str:
+    """Reads the server's configured language from guild_config."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT language FROM guild_config WHERE guild_id = ?", (str(guild_id),)
+    ).fetchone()
+    conn.close()
+    return row[0] if row and row[0] else "en_US"
+
+
+def _get_current_events(guild_id: int) -> List[Tuple[str, str, str, str]]:
+    """
+    Returns rows of (event_name, date_start, date_end, raw_date) for events
+    whose date_end is today or later (filters out fully-past events).
+    """
+    today = date.today().isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute(
+        """SELECT event_name, date_start, date_end, raw_date
+           FROM sf_events
+           WHERE guild_id = ? AND date_end >= ?
+           ORDER BY date_start ASC""",
+        (str(guild_id), today)
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+# Embed colour per language — purely cosmetic
+_EMBED_COLOURS = {
+    "pl_PL": discord.Color.from_rgb(255, 215, 0),   # gold
+    "de_DE": discord.Color.from_rgb(0, 0, 0),        # black
+    "en_US": discord.Color.blurple(),
+}
+
+# Localised embed header strings
+_EMBED_TITLES = {
+    "pl_PL": "⚔️ Nadchodzące wydarzenia",
+    "de_DE": "⚔️ Bevorstehende Events",
+    "en_US": "⚔️ Upcoming Events",
+}
+
+_EMBED_NO_EVENTS = {
+    "pl_PL": "Brak zaplanowanych wydarzeń na ten weekend.",
+    "de_DE": "Keine Events für dieses Wochenende geplant.",
+    "en_US": "No events scheduled for this weekend.",
+}
+
+_EMBED_DATE_LABEL = {
+    "pl_PL": "📅 Termin",
+    "de_DE": "📅 Zeitraum",
+    "en_US": "📅 Dates",
+}
+
+_EMBED_FOOTER = {
+    "pl_PL": "Dane z oficjalnego kanału aktualności · Aktualizowane automatycznie",
+    "de_DE": "Daten aus dem offiziellen News-Kanal · Wird automatisch aktualisiert",
+    "en_US": "Data from official news channel · Updated automatically",
+}
+
+
+@app_commands.command(
+    name="events",
+    description="Show current and upcoming in-game events for this weekend."
+)
+@app_commands.guild_only()
+async def events(interaction: discord.Interaction):
+    # NOTE: /events intentionally does NOT call sprawdz_pozwolenie() —
+    # it's a public info command that should work in any channel.
+    config = _get_config(interaction.guild_id)
+    if not config or not config[1]:
+        await interaction.response.send_message(
+            "❌ The events module is not set up or is disabled on this server. "
+            "Ask an admin to run `/sf_events_setup`.",
+            ephemeral=True,
+        )
+        return
+
+    language = _get_guild_language(interaction.guild_id)
+    rows = _get_current_events(interaction.guild_id)
+
+    colour = _EMBED_COLOURS.get(language, discord.Color.blurple())
+    title  = _EMBED_TITLES.get(language, _EMBED_TITLES["en_US"])
+    footer = _EMBED_FOOTER.get(language, _EMBED_FOOTER["en_US"])
+
+    embed = discord.Embed(title=title, color=colour)
+    embed.set_footer(text=footer)
+    embed.timestamp = discord.utils.utcnow()
+
+    if not rows:
+        embed.description = _EMBED_NO_EVENTS.get(language, _EMBED_NO_EVENTS["en_US"])
+        await interaction.response.send_message(embed=embed)
+        return
+
+    # Group events by date range so events sharing the same weekend
+    # appear neatly under one date header rather than repeating it.
+    groups: dict[str, list[str]] = {}
+    for event_name, date_start, date_end, raw_date in rows:
+        translated = _translate_event(event_name, language)
+        groups.setdefault(raw_date, []).append(translated)
+
+    date_label = _EMBED_DATE_LABEL.get(language, _EMBED_DATE_LABEL["en_US"])
+    for raw_date, event_list in groups.items():
+        embed.add_field(
+            name=f"{date_label}: `{raw_date}`",
+            value="\n".join(f"• {e}" for e in event_list),
+            inline=False,
+        )
+
+    await interaction.response.send_message(embed=embed)
+
+
+@events.error
+async def events_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.NoPrivateMessage):
+        await interaction.response.send_message("❌ This command can only be used inside a server.", ephemeral=True)
+    else:
+        print(f"events command error: {error}")
+        await interaction.response.send_message("❌ Something went wrong fetching events.", ephemeral=True)
