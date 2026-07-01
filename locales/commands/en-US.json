@@ -91,6 +91,16 @@
   "settings": {
     "description": "Change a single server setting without resetting everything (admin only)."
   },
+  "wg_block_image": {
+    "description": "Manually add an image to the scam blocklist",
+    "options": {
+      "image": "The image to block",
+      "reason": "Why this image is being blocked (optional)"
+    }
+  },
+  "wg_blocklist_stats": {
+    "description": "Show how many images are in the scam hash blocklist"
+  },
   "sf_events_setup": {
     "description": "Set the channel where official game event webhooks arrive (admin only).",
     "options": { "channel": "The channel that receives official game news/event webhooks" }
