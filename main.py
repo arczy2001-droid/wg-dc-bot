@@ -20,6 +20,13 @@ from setup_wizard import (
 )
 from i18n import translator
 from command_i18n import CommandTranslator
+from sf_events import (
+    init_sf_events_tables,
+    handle_event_webhook,
+    sf_events_setup,
+    sf_events_toggle,
+    events as events_command,
+)
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 OCR_API_KEY = os.getenv("OCR_SPACE_API_KEY")
@@ -34,6 +41,16 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS czlonkowie (guild_id TEXT, swiat TEXT, nick TEXT, PRIMARY KEY (guild_id, swiat, nick))")
     c.execute("CREATE TABLE IF NOT EXISTS swiaty (guild_id TEXT, nazwa TEXT, kanal_id TEXT, PRIMARY KEY (guild_id, nazwa))")
     c.execute("CREATE TABLE IF NOT EXISTS raporty (guild_id TEXT, swiat TEXT, data_wpisu TIMESTAMP)")
+    # Perceptual hash blocklist — shared across ALL guilds so if any server
+    # sees a scam image first, every other server is immediately protected too.
+    # hash_value: hex string of the 64-bit pHash
+    # distance_threshold stored per-entry so you can tune per image if needed
+    c.execute("""CREATE TABLE IF NOT EXISTS image_blocklist (
+        hash_value   TEXT PRIMARY KEY,
+        added_by     TEXT,
+        added_at     TIMESTAMP,
+        reason       TEXT
+    )""")
 
     # weekday: Python's datetime.weekday() convention -> Monday=0 ... Sunday=6
     # One-time migration: earlier versions had ranking_schedule keyed by guild_id
@@ -119,6 +136,64 @@ def policz_wskazniki_scamu(tekst: str) -> int:
     tekst = tekst.lower()
     return sum(1 for kw in SCAM_KEYWORDS if kw in tekst)
 
+
+# ---------------------------------------------------------------------------
+# PERCEPTUAL IMAGE HASHING
+# Uses imagehash.phash() which produces a 64-bit fingerprint measuring
+# *visual similarity* — two images that look the same to the human eye will
+# have a Hamming distance <= HASH_THRESHOLD even if they've been resized,
+# lightly compressed, or colour-tweaked by the spammer.
+#
+# Install on your VPS: pip install imagehash Pillow
+# ---------------------------------------------------------------------------
+HASH_THRESHOLD = 8  # max Hamming distance to count as "same image" (0-64).
+                    # 8 is a good balance: catches re-saves/resizes, won't
+                    # flag unrelated images. Lower = stricter, higher = looser.
+
+def compute_phash(image_path: str) -> Optional[str]:
+    """Returns the hex pHash string, or None if the file can't be read."""
+    try:
+        import imagehash
+        from PIL import Image
+        h = imagehash.phash(Image.open(image_path))
+        return str(h)  # hex string, e.g. "f8e0c0c0e0f0f8f8"
+    except Exception as e:
+        print(f"pHash error on {image_path}: {e}")
+        return None
+
+def is_hash_blocked(phash_str: str) -> bool:
+    """True if this image's perceptual hash is within HASH_THRESHOLD of any
+    stored blocked hash. Iterates the full blocklist — fine at typical sizes
+    (hundreds of entries); revisit with an index if it grows to tens of thousands."""
+    try:
+        import imagehash
+        incoming = imagehash.hex_to_hash(phash_str)
+        conn = sqlite3.connect(DB_PATH)
+        rows = conn.execute("SELECT hash_value FROM image_blocklist").fetchall()
+        conn.close()
+        for (stored_hex,) in rows:
+            try:
+                stored = imagehash.hex_to_hash(stored_hex)
+                if (incoming - stored) <= HASH_THRESHOLD:
+                    return True
+            except Exception:
+                continue
+        return False
+    except Exception as e:
+        print(f"Hash blocklist check error: {e}")
+        return False
+
+def store_phash(phash_str: str, guild_id: int, reason: str = "auto-detected scam image") -> None:
+    """Saves a new hash to the global blocklist. Safe to call even if the
+    hash already exists (INSERT OR IGNORE)."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "INSERT OR IGNORE INTO image_blocklist VALUES (?, ?, ?, ?)",
+        (phash_str, str(guild_id), datetime.now().isoformat(), reason)
+    )
+    conn.commit()
+    conn.close()
+
 async def wyslij_log(guild_id: str, tytul: str, kolor: discord.Color, autor: discord.abc.User, pola: list):
     """Wspólna funkcja do logowania (phishing / scam image / deleted message). Czyta logs_channel z guild_config."""
     conn = sqlite3.connect("gildia.db")
@@ -148,9 +223,13 @@ class MyBot(commands.Bot):
     async def setup_hook(self):
         init_db()
         init_setup_table()
+        init_sf_events_tables()
         self.tree.add_command(setup_command)
         self.tree.add_command(setup_reset_command)
         self.tree.add_command(settings_command)
+        self.tree.add_command(sf_events_setup)
+        self.tree.add_command(sf_events_toggle)
+        self.tree.add_command(events_command)
         await self.tree.set_translator(CommandTranslator())  # must be set before sync()
         self.czyszczenie.start()
         self.niedzielny_ranking.start()
@@ -616,6 +695,51 @@ async def wg_ranking_status(interaction: discord.Interaction, swiat: Optional[st
         ]
         await interaction.response.send_message("📅 Automatic ranking schedule:\n" + "\n".join(lines))
 
+@bot.tree.command(name="wg_block_image", description="Manually add an image to the scam blocklist")
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.describe(
+    image="The image to block",
+    reason="Why this image is being blocked (optional)"
+)
+async def wg_block_image(interaction: discord.Interaction, image: discord.Attachment, reason: Optional[str] = "manually blocked by moderator"):
+    if not await sprawdz_pozwolenie(interaction): return
+    await interaction.response.defer(ephemeral=True)
+
+    safe_name = re.sub(r'[^A-Za-z0-9._-]', '_', os.path.basename(image.filename))
+    tmp_path = f"block_{interaction.id}_{safe_name}"
+    try:
+        await image.save(tmp_path)
+        phash_str = compute_phash(tmp_path)
+        if not phash_str:
+            await interaction.followup.send("❌ Could not compute hash for this image — is it a valid image file?", ephemeral=True)
+            return
+
+        already = is_hash_blocked(phash_str)
+        store_phash(phash_str, interaction.guild_id, reason)
+
+        if already:
+            await interaction.followup.send(f"ℹ️ This image (or a visually similar one) was already in the blocklist.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"✅ Image added to the global scam blocklist.\n`hash: {phash_str}`\nReason: {reason}", ephemeral=True)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+@bot.tree.command(name="wg_blocklist_stats", description="Show how many images are in the scam hash blocklist")
+async def wg_blocklist_stats(interaction: discord.Interaction):
+    if not await sprawdz_pozwolenie(interaction): return
+    conn = sqlite3.connect(DB_PATH)
+    total = conn.execute("SELECT COUNT(*) FROM image_blocklist").fetchone()[0]
+    recent = conn.execute(
+        "SELECT hash_value, added_by, added_at, reason FROM image_blocklist ORDER BY added_at DESC LIMIT 5"
+    ).fetchall()
+    conn.close()
+
+    lines = [f"🛡️ **Scam image blocklist: {total} entries**\n\n**Last 5 added:**"]
+    for h, guild, ts, rsn in recent:
+        lines.append(f"`{h[:16]}...` — {rsn} (guild {guild}, {ts[:10]})")
+    await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
 @bot.tree.command(name="test_scrapera", description="Test połączenia bota z SFDataHub")
 async def test_scrapera(interaction: discord.Interaction):
     await interaction.response.defer()
@@ -644,12 +768,100 @@ async def test_scrapera(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"❌ **Wystąpił błąd podczas skanowania:**\n`{e}`")
 
+# ---------------------------------------------------------------------------
+# ANTI-RAID: per-guild, per-user channel tracker
+# Tracks how many DISTINCT channels a user has posted in within a rolling
+# time window. Hitting the threshold means they're mass-spamming channels —
+# the bot kicks them and deletes every tracked message instantly, before OCR
+# or FishFish even runs (which is why the spammer slipped through last time:
+# those checks are async/rate-limited, this one is pure in-memory, O(1)).
+# ---------------------------------------------------------------------------
+from collections import defaultdict
+
+# Structure: {guild_id: {user_id: [(channel_id, message, timestamp), ...]}}
+_spam_tracker: dict = defaultdict(lambda: defaultdict(list))
+
+RAID_CHANNEL_THRESHOLD = 5    # distinct channels within the window
+RAID_WINDOW_SECONDS    = 30   # rolling window
+
+
+async def _check_raid(message: discord.Message) -> bool:
+    """Returns True if this message triggered a raid action (caller should return immediately)."""
+    guild_id = message.guild.id
+    user_id  = message.author.id
+    now      = message.created_at.timestamp()
+    window_start = now - RAID_WINDOW_SECONDS
+
+    record = _spam_tracker[guild_id][user_id]
+
+    # Prune entries older than the window
+    record[:] = [(ch, msg, ts) for ch, msg, ts in record if ts >= window_start]
+
+    # Add current message
+    record.append((message.channel.id, message, now))
+
+    # Count distinct channels in the window
+    distinct_channels = len({ch for ch, _, _ in record})
+    if distinct_channels < RAID_CHANNEL_THRESHOLD:
+        return False
+
+    # --- RAID DETECTED ---
+    # 1. Delete every tracked message across all channels immediately
+    for _, tracked_msg, _ in record:
+        try:
+            await tracked_msg.delete()
+        except (discord.NotFound, discord.Forbidden):
+            pass
+
+    # 2. Clear tracker for this user so we don't double-process
+    _spam_tracker[guild_id].pop(user_id, None)
+
+    # 3. Kick the user (requires Kick Members permission on the bot's role)
+    try:
+        await message.guild.kick(
+            message.author,
+            reason=f"Anti-raid: posted in {distinct_channels} channels within {RAID_WINDOW_SECONDS}s"
+        )
+    except discord.Forbidden:
+        print(f"Anti-raid: couldn't kick {message.author} — missing Kick Members permission")
+
+    # 4. Log to the guild's log channel
+    await wyslij_log(
+        str(guild_id),
+        "🚨 Raid/spam account kicked",
+        discord.Color.dark_red(),
+        message.author,
+        [
+            ("Reason", f"Posted in **{distinct_channels}** distinct channels within {RAID_WINDOW_SECONDS}s", False),
+            ("Action", "All messages deleted, user kicked from server", False),
+        ]
+    )
+
+    return True
+
+
 @bot.event
 async def on_message(message: discord.Message):
+    # --- WEBHOOK CHECK MUST BE FIRST — before ANY bot filter ---
+    # Discord's "Follow Channel" feature delivers official news via webhooks,
+    # which are flagged as bots (message.author.bot = True). If we let the
+    # bot-filter run first, every event announcement is silently dropped.
+    # handle_event_webhook() returns True only for relevant webhook messages
+    # in the configured channel; everything else falls through normally.
+    if message.guild and await handle_event_webhook(message):
+        return
+
     if message.author.bot:
         return
     if not message.guild:
         return  # DMs have no per-guild settings to look up
+
+    # --- 0) Anti-raid check FIRST — pure in-memory, no API rate limits ---
+    # This catches mass multi-channel spammers even before OCR or FishFish
+    # run, which is exactly the gap that let some messages through last time.
+    if await _check_raid(message):
+        await bot.process_commands(message)
+        return
 
     # --- 1) Sprawdzanie linków przeciw bazie FishFish (malware/phishing) ---
     znalezione_linki = re.findall(r'(https?://[^\s]+)', message.content)
@@ -684,7 +896,7 @@ async def on_message(message: discord.Message):
                     await bot.process_commands(message)
                     return  # message already deleted, nothing more to scan
 
-    # --- 2) Sprawdzanie obrazków pod kątem scamów (fałszywe kasyna/giveawaye) ---
+    # --- 2) Image scanning: hash check first (free, instant), then OCR fallback ---
     for att in message.attachments:
         if not (att.content_type and att.content_type.startswith("image/")):
             continue
@@ -693,9 +905,28 @@ async def on_message(message: discord.Message):
         tmp_path = f"scamcheck_{message.id}_{safe_name}"
         try:
             await att.save(tmp_path)
-            linie = await analizuj_screen(tmp_path)
-            tekst = " ".join(linie)
-            if policz_wskazniki_scamu(tekst) >= 2:
+
+            # Step A: perceptual hash check — zero API cost, runs in milliseconds.
+            # If this image (or a visually similar one) was already caught on any
+            # server, block it instantly without touching OCR.space.
+            phash_str = compute_phash(tmp_path)
+            hash_hit = phash_str and is_hash_blocked(phash_str)
+
+            # Step B: OCR keyword scan — only runs if the hash didn't match,
+            # so every confirmed scam image reduces future OCR usage.
+            ocr_hit = False
+            if not hash_hit:
+                linie = await analizuj_screen(tmp_path)
+                tekst = " ".join(linie)
+                if policz_wskazniki_scamu(tekst) >= 2:
+                    ocr_hit = True
+                    # Store the hash so this image (and visually similar ones)
+                    # are caught instantly on every server from now on.
+                    if phash_str:
+                        store_phash(phash_str, message.guild.id, "auto-detected by OCR keyword scan")
+
+            if hash_hit or ocr_hit:
+                detection_method = "hash blocklist" if hash_hit else "OCR keyword scan"
                 try:
                     await message.delete()
                 except discord.NotFound:
@@ -713,7 +944,7 @@ async def on_message(message: discord.Message):
                     [
                         ("Kanał", message.channel.mention, True),
                         ("Plik", att.filename, True),
-                        ("Wykryty tekst (OCR)", tekst[:1000] if tekst else "*[No text detected]*", False),
+                        ("Wykryto przez", detection_method, True),
                     ]
                 )
                 await bot.process_commands(message)
