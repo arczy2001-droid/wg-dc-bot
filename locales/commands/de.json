@@ -91,6 +91,16 @@
   "settings": {
     "description": "Eine einzelne Servereinstellung ändern, ohne alles zurückzusetzen (nur Admin)."
   },
+  "wg_block_image": {
+    "description": "Ein Bild manuell zur Scam-Blockliste hinzufügen",
+    "options": {
+      "image": "Das zu blockierende Bild",
+      "reason": "Grund für die Blockierung (optional)"
+    }
+  },
+  "wg_blocklist_stats": {
+    "description": "Anzahl der Bilder in der Scam-Hash-Blockliste anzeigen"
+  },
   "sf_events_setup": {
     "description": "Den Kanal festlegen, in dem offizielle Spiel-Event-Webhooks ankommen (nur Admin).",
     "options": { "channel": "Der Kanal, der offizielle Spiel-News/Event-Webhooks empfängt" }
