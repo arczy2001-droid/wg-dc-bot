@@ -3,20 +3,20 @@ sf_events.py
 ============
 Tracks in-game event schedules posted by official game webhooks and exposes
 a public /events command with full i18n support.
-
+ 
 HOW IT HOOKS INTO on_message (CRITICAL — READ THIS):
-
+ 
     Discord's "Follow Channel" feature forwards messages via a Webhook.
     Webhooks are flagged as bots (message.author.bot = True), so your
     existing `if message.author.bot: return` guard would silently drop every
     event announcement before this module sees it.
-
+ 
     The solution: call `handle_event_webhook(message)` BEFORE that guard.
     Only if it returns False (message was not a relevant event webhook) should
     the normal bot-filter logic run.
-
+ 
 INTEGRATION (in gildia_bot.py):
-
+ 
     from sf_events import (
         init_sf_events_tables,
         handle_event_webhook,
@@ -24,49 +24,49 @@ INTEGRATION (in gildia_bot.py):
         sf_events_toggle,
         events as events_command,
     )
-
+ 
     # in setup_hook, before tree.sync():
     init_sf_events_tables()
     self.tree.add_command(sf_events_setup)
     self.tree.add_command(sf_events_toggle)
     self.tree.add_command(events_command)
-
+ 
     # in on_message, as the VERY FIRST thing — before `if message.author.bot`:
     if await handle_event_webhook(message):
         return   # was a webhook event message, already handled
-
+ 
 EXAMPLE WEBHOOK MESSAGE FORMAT this parser handles:
-
+ 
     ⚔️ **Weekend Events** (26.06 - 28.06):
     • Double Gold
     • Sea Monster Invasion
     • Treasure Hunt
-
+ 
     Or without bullet points:
     Weekend Events (26.06 - 28.06)
     - Double Gold
     - Raid Event
     - Black Pearl Hunt
-
+ 
     Date separators supported: -, –, —, /
     Leading symbols on event lines: •, -, *, –, ▶, empty (plain text)
 """
-
+ 
 import json
 import re
 import sqlite3
 from datetime import datetime, date
 from typing import Optional, List, Tuple
-
+ 
 import discord
 from discord import app_commands
-
+ 
 DB_PATH = "gildia.db"
-
+ 
 # ---------------------------------------------------------------------------
 # DATABASE
 # ---------------------------------------------------------------------------
-
+ 
 def init_sf_events_tables() -> None:
     """Idempotent — safe to call on every startup."""
     conn = sqlite3.connect(DB_PATH)
@@ -94,8 +94,8 @@ def init_sf_events_tables() -> None:
     """)
     conn.commit()
     conn.close()
-
-
+ 
+ 
 def _get_config(guild_id: int) -> Optional[Tuple[str, bool]]:
     """Returns (channel_id, enabled) or None if never configured."""
     conn = sqlite3.connect(DB_PATH)
@@ -107,15 +107,23 @@ def _get_config(guild_id: int) -> Optional[Tuple[str, bool]]:
     if row:
         return row[0], bool(row[1])
     return None
-
-
+ 
+ 
 def _save_events(guild_id: int, events: List[str], date_start: date, date_end: date, raw_date: str) -> None:
-    """Replaces the guild's current event schedule with the newly parsed one."""
+    """
+    Upserts events for ONE date section.
+    Does NOT wipe the whole table — different weekends' events coexist in the DB.
+    Old events for the same date_start are replaced (handles the case where the
+    game edits its post to change the event list for that weekend).
+    """
     conn = sqlite3.connect(DB_PATH)
     now = datetime.now().isoformat()
-    # Remove previous schedule for this guild before inserting the new one,
-    # so stale events from last weekend don't linger if they weren't repeated.
-    conn.execute("DELETE FROM sf_events WHERE guild_id = ?", (str(guild_id),))
+    # Remove only events matching this specific date_start so we don't
+    # clobber other weekends' data.
+    conn.execute(
+        "DELETE FROM sf_events WHERE guild_id = ? AND date_start = ?",
+        (str(guild_id), date_start.isoformat())
+    )
     for name in events:
         conn.execute(
             """INSERT OR REPLACE INTO sf_events
@@ -125,8 +133,8 @@ def _save_events(guild_id: int, events: List[str], date_start: date, date_end: d
         )
     conn.commit()
     conn.close()
-
-
+ 
+ 
 # ---------------------------------------------------------------------------
 # EVENT NAME TRANSLATIONS
 # ---------------------------------------------------------------------------
@@ -221,14 +229,18 @@ def _translate_event(event_name: str, language: str) -> str:
 # REGEX PARSING
 # ---------------------------------------------------------------------------
 
-# Matches date ranges like:  (26.06 - 28.06)  or  26.06 – 28.06  or  26.06/28.06
+# Matches date ranges like:
+#   (26.06 - 28.06)   standard format
+#   (03.07. - 05.07.) trailing dot after month (seen in real webhooks)
+#   26.06 – 28.06     no parens, en-dash
+#   26.06/28.06       slash separator
+# \.? makes the trailing dot after the month optional.
 # Groups: (1) start_day, (2) start_month, (3) end_day, (4) end_month
 _DATE_RANGE_RE = re.compile(
-    r'\(?\s*(\d{1,2})\.(\d{2})\s*[-–—/]\s*(\d{1,2})\.(\d{2})\s*\)?'
+    r'\(?\s*(\d{1,2})\.(\d{2})\.?\s*[-–—/]\s*(\d{1,2})\.(\d{2})\.?\s*\)?'
 )
 
 # Matches a line that starts with a bullet/dash/asterisk and has content.
-# Captures the event name after the leading symbol and optional whitespace.
 _BULLET_LINE_RE = re.compile(
     r'^[\s]*[•\-\*–▶➤►][\s]+(.+)$',
     re.MULTILINE
@@ -241,51 +253,72 @@ def _resolve_year(day: int, month: int) -> int:
     in the near future: if the month has already passed this year, we assume
     next year (handles Dec→Jan rollovers cleanly).
     """
+    from datetime import timedelta
     today = date.today()
     candidate = date(today.year, month, day)
-    if candidate < today - __import__('datetime').timedelta(days=7):
+    if candidate < today - timedelta(days=7):
         candidate = date(today.year + 1, month, day)
     return candidate.year
 
 
-def parse_event_message(content: str) -> Optional[Tuple[date, date, str, List[str]]]:
+def parse_event_message(content: str) -> Optional[List[Tuple[date, date, str, List[str]]]]:
     """
-    Attempts to extract a date range and event list from a webhook message.
+    Extracts ALL date sections from a webhook message.
 
-    Returns (date_start, date_end, raw_date_str, [event_names]) on success,
-    or None if the message doesn't look like an event schedule.
+    The game posts a full monthly calendar in one message — multiple weekends,
+    each with their own date header and bullet list. This function finds every
+    date range in the message and returns the events listed under each one.
+
+    Returns a list of (date_start, date_end, raw_date, [event_names]) tuples,
+    one per date section found. Returns None if no date range is found at all.
+
+    Example input:
+        Legendary sprint (26.06 - 28.06)
+        • Double Gold
+        • Sea Monster Invasion
+
+        Festive Variety (03.07. - 05.07.)
+        • Exceptional XP Event
+        • Rumble for Riches
     """
-    match = _DATE_RANGE_RE.search(content)
-    if not match:
+    # Find all date range matches and their positions in the text
+    date_matches = list(_DATE_RANGE_RE.finditer(content))
+    if not date_matches:
         return None
 
-    start_day, start_month, end_day, end_month = (int(x) for x in match.groups())
-    raw_date = match.group(0).strip("() ")
+    results = []
 
-    try:
-        year_start = _resolve_year(start_day, start_month)
-        year_end   = _resolve_year(end_day, end_month)
-        date_start = date(year_start, start_month, start_day)
-        date_end   = date(year_end,   end_month,   end_day)
-    except ValueError as e:
-        print(f"sf_events: invalid date in message ({raw_date}): {e}")
-        return None
+    for i, match in enumerate(date_matches):
+        start_day, start_month, end_day, end_month = (int(x) for x in match.groups())
+        raw_date = match.group(0).strip("() \n")
 
-    # Try bullet-list format first
-    events = [m.group(1).strip() for m in _BULLET_LINE_RE.finditer(content)]
+        try:
+            date_start = date(_resolve_year(start_day, start_month), start_month, start_day)
+            date_end   = date(_resolve_year(end_day,   end_month),   end_month,   end_day)
+        except ValueError as e:
+            print(f"sf_events: invalid date ({raw_date}): {e}")
+            continue
 
-    # Fallback: grab plain lines after the date pattern that aren't empty/headers
-    if not events:
-        after_date = content[match.end():]
-        for line in after_date.splitlines():
-            line = line.strip()
-            if line and not line.startswith(("**", "__", "#")):
-                events.append(line)
+        # The section's text runs from this date match to the next date match
+        # (or end of message for the last section).
+        section_start = match.end()
+        section_end   = date_matches[i + 1].start() if i + 1 < len(date_matches) else len(content)
+        section_text  = content[section_start:section_end]
 
-    if not events:
-        return None
+        # Extract bullet lines from this section
+        events = [m.group(1).strip() for m in _BULLET_LINE_RE.finditer(section_text)]
 
-    return date_start, date_end, raw_date, events
+        # Fallback: plain non-empty lines that don't look like headers
+        if not events:
+            for line in section_text.splitlines():
+                line = line.strip()
+                if line and not line.startswith(("**", "__", "#", "•")):
+                    events.append(line)
+
+        if events:
+            results.append((date_start, date_end, raw_date, events))
+
+    return results if results else None
 
 
 # ---------------------------------------------------------------------------
@@ -296,15 +329,14 @@ async def handle_event_webhook(message: discord.Message) -> bool:
     """
     Main entry point called from on_message before `if message.author.bot`.
 
-    Returns True if this message was a relevant event webhook and was handled
-    (caller should `return` immediately after). Returns False for everything
-    else, so normal on_message processing continues.
+    Processes any message arriving in the configured events channel —
+    whether from Discord's Follow Channel webhook OR a regular message
+    (so admins can test by pasting the event post manually).
+
+    Returns True if this message was parsed as an event schedule and handled
+    (caller should `return` immediately). Returns False for everything else.
     """
     if not message.guild:
-        return False
-
-    # Only care about actual webhooks (Follow Channel forwarding)
-    if not message.webhook_id:
         return False
 
     config = _get_config(message.guild.id)
@@ -320,23 +352,25 @@ async def handle_event_webhook(message: discord.Message) -> bool:
         return False
 
     content = message.content or ""
-    # Also check embeds — some webhooks put all content in an embed description
+    # Also check embeds — some webhooks put content in embed descriptions
     if not content and message.embeds:
         content = "\n".join(
             (e.description or "") + "\n" + "\n".join(f.value for f in e.fields)
             for e in message.embeds
         )
 
-    result = parse_event_message(content)
-    if not result:
+    results = parse_event_message(content)
+    if not results:
         return False  # message arrived in the channel but isn't an event schedule
 
-    date_start, date_end, raw_date, events = result
-    _save_events(message.guild.id, events, date_start, date_end, raw_date)
+    total_events = 0
+    for date_start, date_end, raw_date, events in results:
+        _save_events(message.guild.id, events, date_start, date_end, raw_date)
+        total_events += len(events)
 
     print(
-        f"sf_events: parsed {len(events)} events for guild {message.guild.id} "
-        f"({raw_date} -> {date_start} – {date_end})"
+        f"sf_events: parsed {len(results)} date section(s), "
+        f"{total_events} events total for guild {message.guild.id}"
     )
     return True
 
