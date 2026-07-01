@@ -90,5 +90,16 @@
   },
   "settings": {
     "description": "Change a single server setting without resetting everything (admin only)."
+  },
+  "sf_events_setup": {
+    "description": "Set the channel where official game event webhooks arrive (admin only).",
+    "options": { "channel": "The channel that receives official game news/event webhooks" }
+  },
+  "sf_events_toggle": {
+    "description": "Enable or disable the SF events tracking module (admin only).",
+    "options": { "state": "True to enable, False to disable" }
+  },
+  "events": {
+    "description": "Show current and upcoming in-game events for this weekend."
   }
 }
