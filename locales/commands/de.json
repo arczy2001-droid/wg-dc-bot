@@ -109,6 +109,9 @@
     "description": "Das SF-Event-Tracking-Modul aktivieren oder deaktivieren (nur Admin).",
     "options": { "state": "True zum Aktivieren, False zum Deaktivieren" }
   },
+  "sf_events_debug": {
+    "description": "SF-Events-Konfiguration und DB-Inhalt anzeigen (nur Admin)."
+  },
   "events": {
     "description": "Aktuelle und bevorstehende In-Game-Events für dieses Wochenende anzeigen."
   }
