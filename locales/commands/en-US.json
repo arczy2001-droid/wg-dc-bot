@@ -109,6 +109,9 @@
     "description": "Enable or disable the SF events tracking module (admin only).",
     "options": { "state": "True to enable, False to disable" }
   },
+  "sf_events_debug": {
+    "description": "Show SF Events config and current DB contents (admin only)."
+  },
   "events": {
     "description": "Show current and upcoming in-game events for this weekend."
   }
