@@ -239,16 +239,16 @@ EVENT_TRANSLATIONS: dict[str, dict[str, str]] = {
         "de_DE": "THere is no translation right now",
     },
     "Catalytic Kaboom": {
-        "pl_PL": "Brak tłumaczenia",
-        "de_DE": "THere is no translation right now",
+        "pl_PL": "Katalizatorowy Wybuch",
+        "de_DE": "Katalytischer Knall",
     },
     "Piecework Party": {
         "pl_PL": "Akordowa awanatura",
-        "de_DE": "THere is no translation right now",
+        "de_DE": "Akkordarbeit-Party",
     },
     "Crazy Mushroom Harvest": {
         "pl_PL": "Szalone Grzybowe Żniwa",
-        "de_DE": "THere is no translation right now",
+        "de_DE": "Verrückte Pilzernte",
     },
 }
 
@@ -390,6 +390,33 @@ async def handle_event_webhook(message: discord.Message) -> bool:
     print(f"sf_events: message in configured channel from {message.author} (webhook={message.webhook_id})")
 
     content = message.content or ""
+
+    # Discord's "Forward Message" feature (the arrow button) stores the
+    # original message in message_snapshots, NOT in message.content which
+    # is always empty for forwards. This lets admins test by forwarding
+    # the game's monthly post manually.
+    if not content:
+        # Try discord.py's native attribute (newer versions)
+        snapshots = getattr(message, 'message_snapshots', None)
+        if snapshots:
+            for snapshot in snapshots:
+                snap_msg = getattr(snapshot, 'message', None)
+                if snap_msg:
+                    content = getattr(snap_msg, 'content', '') or ''
+                    if content:
+                        print(f"sf_events: reading content from message_snapshots (native)")
+                        break
+
+        # Fallback: read raw Discord API dict directly (works on all discord.py versions)
+        if not content:
+            raw = getattr(message, '_data', {}) or {}
+            for snap in raw.get('message_snapshots', []):
+                content = snap.get('message', {}).get('content', '') or ''
+                if content:
+                    print(f"sf_events: reading content from _data['message_snapshots'] (raw)")
+                    break
+
+    # Also check embeds — some webhooks put content in embed descriptions
     if not content and message.embeds:
         content = "\n".join(
             (e.description or "") + "\n" + "\n".join(f.value for f in e.fields)
@@ -508,17 +535,45 @@ def _get_guild_language(guild_id: int) -> str:
 
 def _get_current_events(guild_id: int) -> List[Tuple[str, str, str, str]]:
     """
-    Returns rows of (event_name, date_start, date_end, raw_date) for events
-    whose date_end is today or later (filters out fully-past events).
+    Returns events for the NEXT upcoming weekend only (not the whole month).
+    Logic:
+    - If there is an active event RIGHT NOW (today between date_start and date_end),
+      return that weekend's events.
+    - Otherwise return the next future weekend's events.
+    This keeps the /events embed short and relevant.
     """
     today = date.today().isoformat()
     conn = sqlite3.connect(DB_PATH)
+
+    # First check: is there a currently active weekend?
+    active = conn.execute(
+        """SELECT event_name, date_start, date_end, raw_date
+           FROM sf_events
+           WHERE guild_id = ? AND date_start <= ? AND date_end >= ?
+           ORDER BY date_start ASC""",
+        (str(guild_id), today, today)
+    ).fetchall()
+
+    if active:
+        conn.close()
+        return active
+
+    # No active event — find the next upcoming weekend
+    next_date = conn.execute(
+        "SELECT MIN(date_start) FROM sf_events WHERE guild_id = ? AND date_start > ?",
+        (str(guild_id), today)
+    ).fetchone()[0]
+
+    if not next_date:
+        conn.close()
+        return []
+
     rows = conn.execute(
         """SELECT event_name, date_start, date_end, raw_date
            FROM sf_events
-           WHERE guild_id = ? AND date_end >= ?
-           ORDER BY date_start ASC""",
-        (str(guild_id), today)
+           WHERE guild_id = ? AND date_start = ?
+           ORDER BY event_name ASC""",
+        (str(guild_id), next_date)
     ).fetchall()
     conn.close()
     return rows
@@ -606,71 +661,6 @@ async def events(interaction: discord.Interaction):
         )
 
     await interaction.response.send_message(embed=embed)
-
-
-@app_commands.command(
-    name="sf_events_debug",
-    description="Show SF Events config and current DB contents (admin only)."
-)
-@app_commands.checks.has_permissions(manage_guild=True)
-async def sf_events_debug(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    from datetime import date as _date
-    gid = interaction.guild_id
-    lines = []
-
-    # --- Config ---
-    config = _get_config(gid)
-    if not config:
-        lines.append("❌ **Config:** Not set up. Run `/sf_events_setup` first.")
-    else:
-        channel_id, enabled = config
-        lines.append(f"✅ **Config:** channel=<#{channel_id}> enabled={enabled}")
-
-    # --- DB contents ---
-    conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute(
-        "SELECT event_name, date_start, date_end, raw_date FROM sf_events WHERE guild_id=? ORDER BY date_start, event_name",
-        (str(gid),)
-    ).fetchall()
-    conn.close()
-
-    today = _date.today().isoformat()
-    lines.append(f"\n📦 **sf_events table:** {len(rows)} rows")
-    if rows:
-        for event_name, date_start, date_end, raw_date in rows[:20]:
-            past = "~~" if date_end < today else ""
-            lines.append(f"  {past}{raw_date}: {event_name}{past}")
-        if len(rows) > 20:
-            lines.append(f"  ... and {len(rows) - 20} more")
-    else:
-        lines.append("  *(empty — paste the event message in the configured channel)*")
-
-    # --- Table schema check ---
-    conn = sqlite3.connect(DB_PATH)
-    create_sql = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='sf_events'"
-    ).fetchone()
-    conn.close()
-    if create_sql:
-        pk_ok = "event_name, date_start)" in create_sql[0]
-        lines.append(f"\n🔑 **PK schema:** {'✅ correct (guild, event, date_start)' if pk_ok else '❌ OLD (guild, event only) — needs restart to migrate'}")
-
-    lines.append(f"\n📅 **Today:** {_date.today().isoformat()}")
-
-    await interaction.followup.send("\n".join(lines), ephemeral=True)
-
-
-@sf_events_debug.error
-async def sf_events_debug_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    print(f"sf_events_debug error: {error}")
-    try:
-        if interaction.response.is_done():
-            await interaction.followup.send(f"❌ Something went wrong: `{error}`", ephemeral=True)
-        else:
-            await interaction.response.send_message(f"❌ Something went wrong: `{error}`", ephemeral=True)
-    except Exception:
-        pass
 
 
 @events.error
