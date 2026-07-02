@@ -615,6 +615,7 @@ async def events(interaction: discord.Interaction):
 @app_commands.checks.has_permissions(manage_guild=True)
 async def sf_events_debug(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
+    from datetime import date as _date
     gid = interaction.guild_id
     lines = []
 
@@ -634,10 +635,9 @@ async def sf_events_debug(interaction: discord.Interaction):
     ).fetchall()
     conn.close()
 
+    today = _date.today().isoformat()
     lines.append(f"\n📦 **sf_events table:** {len(rows)} rows")
     if rows:
-        from datetime import date as _date
-        today = _date.today().isoformat()
         for event_name, date_start, date_end, raw_date in rows[:20]:
             past = "~~" if date_end < today else ""
             lines.append(f"  {past}{raw_date}: {event_name}{past}")
@@ -663,7 +663,14 @@ async def sf_events_debug(interaction: discord.Interaction):
 
 @sf_events_debug.error
 async def sf_events_debug_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
+    print(f"sf_events_debug error: {error}")
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(f"❌ Something went wrong: `{error}`", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ Something went wrong: `{error}`", ephemeral=True)
+    except Exception:
+        pass
 
 
 @events.error
