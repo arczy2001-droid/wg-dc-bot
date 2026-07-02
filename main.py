@@ -25,7 +25,6 @@ from sf_events import (
     handle_event_webhook,
     sf_events_setup,
     sf_events_toggle,
-    sf_events_debug,
     events as events_command,
 )
 
@@ -230,7 +229,6 @@ class MyBot(commands.Bot):
         self.tree.add_command(settings_command)
         self.tree.add_command(sf_events_setup)
         self.tree.add_command(sf_events_toggle)
-        self.tree.add_command(sf_events_debug)
         self.tree.add_command(events_command)
         await self.tree.set_translator(CommandTranslator())  # must be set before sync()
         self.czyszczenie.start()
