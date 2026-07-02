@@ -70,6 +70,7 @@ DB_PATH = "gildia.db"
 def init_sf_events_tables() -> None:
     """Idempotent — safe to call on every startup."""
     conn = sqlite3.connect(DB_PATH)
+
     # Per-guild module config: which channel to listen on, and is it enabled?
     conn.execute("""
         CREATE TABLE IF NOT EXISTS sf_events_config (
@@ -78,20 +79,58 @@ def init_sf_events_tables() -> None:
             enabled    INTEGER NOT NULL DEFAULT 1
         )
     """)
-    # The parsed event schedule for each guild.
-    # event_name is always stored in English (the source language of the webhook).
-    # date_start / date_end are ISO-8601 strings (YYYY-MM-DD).
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS sf_events (
-            guild_id   TEXT NOT NULL,
-            event_name TEXT NOT NULL,
-            date_start TEXT NOT NULL,
-            date_end   TEXT NOT NULL,
-            raw_date   TEXT NOT NULL,
-            updated_at TIMESTAMP NOT NULL,
-            PRIMARY KEY (guild_id, event_name)
-        )
-    """)
+
+    # Check if sf_events exists with the OLD primary key (guild_id, event_name).
+    # The old schema only kept the LAST occurrence of each event name, causing
+    # recurring events to disappear from earlier weekends.
+    # The new schema is (guild_id, event_name, date_start) so the same event
+    # can appear in multiple weekends simultaneously.
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(sf_events)").fetchall()]
+    if cols and "date_start" not in [
+        row[1] for row in conn.execute("PRAGMA index_list(sf_events)").fetchall()
+    ]:
+        # Check primary key by looking at the table's CREATE statement
+        create_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='sf_events'"
+        ).fetchone()
+        if create_sql and "event_name)" in create_sql[0]:
+            # Old schema detected — migrate
+            print("sf_events: migrating table to new (guild_id, event_name, date_start) primary key...")
+            conn.execute("ALTER TABLE sf_events RENAME TO sf_events_old")
+            conn.execute("""
+                CREATE TABLE sf_events (
+                    guild_id   TEXT NOT NULL,
+                    event_name TEXT NOT NULL,
+                    date_start TEXT NOT NULL,
+                    date_end   TEXT NOT NULL,
+                    raw_date   TEXT NOT NULL,
+                    updated_at TIMESTAMP NOT NULL,
+                    PRIMARY KEY (guild_id, event_name, date_start)
+                )
+            """)
+            # Carry over old data (might be incomplete but better than nothing)
+            conn.execute("""
+                INSERT OR IGNORE INTO sf_events
+                SELECT guild_id, event_name, date_start, date_end, raw_date, updated_at
+                FROM sf_events_old
+            """)
+            conn.execute("DROP TABLE sf_events_old")
+            print("sf_events: migration complete. Recommend re-pasting the monthly event message.")
+        else:
+            pass  # already on new schema
+    else:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sf_events (
+                guild_id   TEXT NOT NULL,
+                event_name TEXT NOT NULL,
+                date_start TEXT NOT NULL,
+                date_end   TEXT NOT NULL,
+                raw_date   TEXT NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
+                PRIMARY KEY (guild_id, event_name, date_start)
+            )
+        """)
+
     conn.commit()
     conn.close()
  
@@ -112,14 +151,12 @@ def _get_config(guild_id: int) -> Optional[Tuple[str, bool]]:
 def _save_events(guild_id: int, events: List[str], date_start: date, date_end: date, raw_date: str) -> None:
     """
     Upserts events for ONE date section.
-    Does NOT wipe the whole table — different weekends' events coexist in the DB.
-    Old events for the same date_start are replaced (handles the case where the
-    game edits its post to change the event list for that weekend).
+    PK is now (guild_id, event_name, date_start) so the same event name
+    can coexist across multiple weekends without overwriting each other.
     """
     conn = sqlite3.connect(DB_PATH)
     now = datetime.now().isoformat()
-    # Remove only events matching this specific date_start so we don't
-    # clobber other weekends' data.
+    # Clear old entries for this exact weekend (handles game editing its post)
     conn.execute(
         "DELETE FROM sf_events WHERE guild_id = ? AND date_start = ?",
         (str(guild_id), date_start.isoformat())
@@ -133,6 +170,7 @@ def _save_events(guild_id: int, events: List[str], date_start: date, date_end: d
         )
     conn.commit()
     conn.close()
+    print(f"sf_events: saved {len(events)} events for {raw_date} (guild {guild_id})")
  
  
 # ---------------------------------------------------------------------------
@@ -328,50 +366,49 @@ def parse_event_message(content: str) -> Optional[List[Tuple[date, date, str, Li
 async def handle_event_webhook(message: discord.Message) -> bool:
     """
     Main entry point called from on_message before `if message.author.bot`.
-
-    Processes any message arriving in the configured events channel —
-    whether from Discord's Follow Channel webhook OR a regular message
-    (so admins can test by pasting the event post manually).
-
-    Returns True if this message was parsed as an event schedule and handled
-    (caller should `return` immediately). Returns False for everything else.
+    Processes any message in the configured events channel.
+    Returns True if parsed as an event schedule (caller should return immediately).
     """
     if not message.guild:
         return False
 
     config = _get_config(message.guild.id)
     if not config:
+        print(f"sf_events: guild {message.guild.id} — no config found, skipping.")
         return False
 
     channel_id, enabled = config
     if not enabled:
+        print(f"sf_events: guild {message.guild.id} — module disabled, skipping.")
         return False
 
-    # Only process messages arriving in the designated events channel
     if str(message.channel.id) != str(channel_id):
+        # Not the events channel — silent, this fires for every message
         return False
+
+    # At this point we know it's the right channel — log everything
+    print(f"sf_events: message in configured channel from {message.author} (webhook={message.webhook_id})")
 
     content = message.content or ""
-    # Also check embeds — some webhooks put content in embed descriptions
     if not content and message.embeds:
         content = "\n".join(
             (e.description or "") + "\n" + "\n".join(f.value for f in e.fields)
             for e in message.embeds
         )
 
+    print(f"sf_events: content length = {len(content)} chars, first 200: {repr(content[:200])}")
+
     results = parse_event_message(content)
     if not results:
-        return False  # message arrived in the channel but isn't an event schedule
+        print(f"sf_events: parse_event_message returned None — no date pattern found in message.")
+        return False
 
     total_events = 0
     for date_start, date_end, raw_date, events in results:
         _save_events(message.guild.id, events, date_start, date_end, raw_date)
         total_events += len(events)
 
-    print(
-        f"sf_events: parsed {len(results)} date section(s), "
-        f"{total_events} events total for guild {message.guild.id}"
-    )
+    print(f"sf_events: ✅ saved {len(results)} sections, {total_events} events total for guild {message.guild.id}")
     return True
 
 
@@ -569,6 +606,64 @@ async def events(interaction: discord.Interaction):
         )
 
     await interaction.response.send_message(embed=embed)
+
+
+@app_commands.command(
+    name="sf_events_debug",
+    description="Show SF Events config and current DB contents (admin only)."
+)
+@app_commands.checks.has_permissions(manage_guild=True)
+async def sf_events_debug(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    gid = interaction.guild_id
+    lines = []
+
+    # --- Config ---
+    config = _get_config(gid)
+    if not config:
+        lines.append("❌ **Config:** Not set up. Run `/sf_events_setup` first.")
+    else:
+        channel_id, enabled = config
+        lines.append(f"✅ **Config:** channel=<#{channel_id}> enabled={enabled}")
+
+    # --- DB contents ---
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute(
+        "SELECT event_name, date_start, date_end, raw_date FROM sf_events WHERE guild_id=? ORDER BY date_start, event_name",
+        (str(gid),)
+    ).fetchall()
+    conn.close()
+
+    lines.append(f"\n📦 **sf_events table:** {len(rows)} rows")
+    if rows:
+        from datetime import date as _date
+        today = _date.today().isoformat()
+        for event_name, date_start, date_end, raw_date in rows[:20]:
+            past = "~~" if date_end < today else ""
+            lines.append(f"  {past}{raw_date}: {event_name}{past}")
+        if len(rows) > 20:
+            lines.append(f"  ... and {len(rows) - 20} more")
+    else:
+        lines.append("  *(empty — paste the event message in the configured channel)*")
+
+    # --- Table schema check ---
+    conn = sqlite3.connect(DB_PATH)
+    create_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='sf_events'"
+    ).fetchone()
+    conn.close()
+    if create_sql:
+        pk_ok = "event_name, date_start)" in create_sql[0]
+        lines.append(f"\n🔑 **PK schema:** {'✅ correct (guild, event, date_start)' if pk_ok else '❌ OLD (guild, event only) — needs restart to migrate'}")
+
+    lines.append(f"\n📅 **Today:** {_date.today().isoformat()}")
+
+    await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+
+@sf_events_debug.error
+async def sf_events_debug_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
 
 
 @events.error
