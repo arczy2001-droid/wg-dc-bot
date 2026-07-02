@@ -109,6 +109,9 @@
     "description": "Włącz lub wyłącz moduł śledzenia wydarzeń SF (tylko admin).",
     "options": { "state": "True aby włączyć, False aby wyłączyć" }
   },
+  "sf_events_debug": {
+    "description": "Pokaż konfigurację SF Events i zawartość bazy danych (tylko admin)."
+  },
   "events": {
     "description": "Pokaż aktualne i nadchodzące wydarzenia w grze na ten weekend."
   }
