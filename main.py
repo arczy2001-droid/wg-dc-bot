@@ -30,6 +30,7 @@ from sf_events import (
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 OCR_API_KEY = os.getenv("OCR_SPACE_API_KEY")
+DB_PATH = "gildia.db"
 
 #    BAZA DANYCH (każda tabela jest teraz scoped per-guild via guild_id)
 #    Uwaga: tabela 'ustawienia' (kanal_glowy / kanal_logow) zostala zastapiona
