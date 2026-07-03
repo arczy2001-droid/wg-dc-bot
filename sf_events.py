@@ -629,7 +629,17 @@ async def events(interaction: discord.Interaction):
         )
         return
 
-    language = _get_guild_language(interaction.guild_id)
+    # Map the user's own Discord client language to our locale codes.
+    # interaction.locale is the user's personal Discord language setting
+    # (e.g. "en-GB", "pl", "de") — use this so each user sees /events
+    # in their own language rather than the server's configured language.
+    _LOCALE_MAP = {
+        "en-US": "en_US", "en-GB": "en_US",
+        "pl":    "pl_PL",
+        "de":    "de_DE",
+    }
+    user_locale = str(interaction.locale)
+    language = _LOCALE_MAP.get(user_locale, _get_guild_language(interaction.guild_id))
     rows = _get_current_events(interaction.guild_id)
 
     colour = _EMBED_COLOURS.get(language, discord.Color.blurple())
