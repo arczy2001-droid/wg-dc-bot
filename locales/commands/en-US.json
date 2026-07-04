@@ -35,12 +35,16 @@
     "description": "Upload the activity report",
     "options": {
       "swiat": "World name",
-      "screen": "Screenshot of the battle/activity list"
+      "screen": "Screenshot of the battle/activity list",
+      "data": "Report date: DD.MM or DD.MM.YYYY (defaults to today if omitted)"
     }
   },
   "wg_absent_list": {
     "description": "List of absences",
-    "options": { "swiat": "World name" }
+    "options": {
+      "swiat": "World name",
+      "okres": "Time window to include (default: all time)"
+    }
   },
   "wg_delete_raport": {
     "description": "Deleting last assigned report",
@@ -50,8 +54,13 @@
     "description": "Add single absence to a member",
     "options": {
       "swiat": "World name",
-      "nick": "Player nickname"
+      "nick": "Player nickname",
+      "data": "Report date: DD.MM or DD.MM.YYYY (defaults to today)"
     }
+  },
+  "wg_cleanup_reports": {
+    "description": "Delete reports older than 3 days (by creation time) for one world",
+    "options": { "swiat": "World name" }
   },
   "wg_delete_absent": {
     "description": "Delete single absence for a member",
@@ -109,8 +118,8 @@
     "description": "Enable or disable the SF events tracking module (admin only).",
     "options": { "state": "True to enable, False to disable" }
   },
-  "sf_events_debug": {
-    "description": "Show SF Events config and current DB contents (admin only)."
+  "sf_events_reload": {
+    "description": "Re-scan the events channel history and reload the event schedule (admin only)."
   },
   "events": {
     "description": "Show current and upcoming in-game events for this weekend."
