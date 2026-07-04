@@ -35,12 +35,16 @@
     "description": "Prześlij raport aktywności",
     "options": {
       "swiat": "Nazwa świata",
-      "screen": "Zrzut ekranu z listą bitwy/aktywności"
+      "screen": "Zrzut ekranu z listą bitwy/aktywności",
+      "data": "Data raportu: DD.MM lub DD.MM.RRRR (domyślnie dzisiaj, jeśli pominięto)"
     }
   },
   "wg_absent_list": {
     "description": "Lista nieobecności",
-    "options": { "swiat": "Nazwa świata" }
+    "options": {
+      "swiat": "Nazwa świata",
+      "okres": "Zakres czasu do uwzględnienia (domyślnie: cały czas)"
+    }
   },
   "wg_delete_raport": {
     "description": "Usuwanie ostatniego przypisanego raportu",
@@ -50,8 +54,13 @@
     "description": "Dodaj pojedynczą nieobecność dla gracza",
     "options": {
       "swiat": "Nazwa świata",
-      "nick": "Nick gracza"
+      "nick": "Nick gracza",
+      "data": "Data raportu: DD.MM lub DD.MM.RRRR (domyślnie dzisiaj)"
     }
+  },
+  "wg_cleanup_reports": {
+    "description": "Usuń raporty starsze niż 3 dni (wg czasu utworzenia) dla jednego świata",
+    "options": { "swiat": "Nazwa świata" }
   },
   "wg_delete_absent": {
     "description": "Usuń pojedynczą nieobecność dla gracza",
@@ -109,8 +118,8 @@
     "description": "Włącz lub wyłącz moduł śledzenia wydarzeń SF (tylko admin).",
     "options": { "state": "True aby włączyć, False aby wyłączyć" }
   },
-  "sf_events_debug": {
-    "description": "Pokaż konfigurację SF Events i zawartość bazy danych (tylko admin)."
+  "sf_events_reload": {
+    "description": "Przeskanuj historię kanału wydarzeń i odśwież harmonogram (tylko admin)."
   },
   "events": {
     "description": "Pokaż aktualne i nadchodzące wydarzenia w grze na ten weekend."
