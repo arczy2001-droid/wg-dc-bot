@@ -450,6 +450,7 @@ async def handle_event_webhook(message: discord.Message) -> bool:
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.describe(channel="The channel that receives official game news/event webhooks")
 async def sf_events_setup(interaction: discord.Interaction, channel: discord.TextChannel):
+    # Save config first
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
         """INSERT INTO sf_events_config (guild_id, channel_id, enabled)
@@ -459,11 +460,86 @@ async def sf_events_setup(interaction: discord.Interaction, channel: discord.Tex
     )
     conn.commit()
     conn.close()
-    await interaction.response.send_message(
-        f"✅ SF Events module set up. Watching {channel.mention} for event schedules.\n"
-        f"Use `/sf_events_toggle` to enable or disable the module at any time.",
-        ephemeral=True,
-    )
+
+    await interaction.response.defer(ephemeral=True)
+
+    # Scan the channel's recent history (up to 100 messages) so that if the
+    # game's monthly post was already there before setup was run, the bot
+    # picks it up immediately without the admin needing to forward it manually.
+    found_sections = 0
+    found_events = 0
+    scanned = 0
+
+    try:
+        async for message in channel.history(limit=100, oldest_first=False):
+            scanned += 1
+            content = message.content or ""
+
+            # Handle Discord's "Forward" feature (content in message_snapshots)
+            if not content:
+                snapshots = getattr(message, 'message_snapshots', None)
+                if snapshots:
+                    for snapshot in snapshots:
+                        snap_msg = getattr(snapshot, 'message', None)
+                        if snap_msg:
+                            content = getattr(snap_msg, 'content', '') or ''
+                            if content:
+                                break
+                if not content:
+                    raw = getattr(message, '_data', {}) or {}
+                    for snap in raw.get('message_snapshots', []):
+                        content = snap.get('message', {}).get('content', '') or ''
+                        if content:
+                            break
+
+            # Also check embeds
+            if not content and message.embeds:
+                content = "\n".join(
+                    (e.description or "") + "\n" + "\n".join(f.value for f in e.fields)
+                    for e in message.embeds
+                )
+
+            if not content:
+                continue
+
+            results = parse_event_message(content)
+            if not results:
+                continue
+
+            # Found a valid event post — save it and stop scanning
+            for date_start, date_end, raw_date, events in results:
+                _save_events(interaction.guild_id, events, date_start, date_end, raw_date)
+                found_sections += 1
+                found_events += len(events)
+
+            print(
+                f"sf_events: history scan found {found_sections} sections, "
+                f"{found_events} events in {channel.name} (guild {interaction.guild_id})"
+            )
+            break  # stop after the first parseable message found
+
+    except discord.Forbidden:
+        await interaction.followup.send(
+            f"✅ SF Events module set up. Watching {channel.mention} for event schedules.\n"
+            f"⚠️ I couldn't read the channel's history — make sure I have **Read Message History** permission there.",
+            ephemeral=True,
+        )
+        return
+
+    if found_sections > 0:
+        await interaction.followup.send(
+            f"✅ SF Events module set up. Watching {channel.mention} for event schedules.\n"
+            f"📅 Found existing event post — loaded **{found_events} events** across "
+            f"**{found_sections} weekend(s)** from channel history. `/events` is ready to use!",
+            ephemeral=True,
+        )
+    else:
+        await interaction.followup.send(
+            f"✅ SF Events module set up. Watching {channel.mention} for event schedules.\n"
+            f"ℹ️ No event schedule found in the last {scanned} messages. "
+            f"The bot will parse automatically when the next one arrives.",
+            ephemeral=True,
+        )
 
 
 @sf_events_setup.error
@@ -517,6 +593,100 @@ async def sf_events_toggle_error(interaction: discord.Interaction, error: app_co
     else:
         print(f"sf_events_toggle error: {error}")
         await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
+
+
+@app_commands.command(
+    name="sf_events_reload",
+    description="Re-scan the events channel history and reload the event schedule (admin only)."
+)
+@app_commands.checks.has_permissions(manage_guild=True)
+async def sf_events_reload(interaction: discord.Interaction):
+    config = _get_config(interaction.guild_id)
+    if not config:
+        await interaction.response.send_message(
+            "❌ Module not configured yet. Run `/sf_events_setup` first.", ephemeral=True
+        )
+        return
+
+    channel_id, enabled = config
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        channel = interaction.client.get_channel(int(channel_id)) or \
+                  await interaction.client.fetch_channel(int(channel_id))
+    except Exception:
+        await interaction.followup.send("❌ Could not access the configured events channel.", ephemeral=True)
+        return
+
+    found_sections = found_events = scanned = 0
+    try:
+        async for message in channel.history(limit=100, oldest_first=False):
+            scanned += 1
+            content = message.content or ""
+
+            if not content:
+                snapshots = getattr(message, 'message_snapshots', None)
+                if snapshots:
+                    for snapshot in snapshots:
+                        snap_msg = getattr(snapshot, 'message', None)
+                        if snap_msg:
+                            content = getattr(snap_msg, 'content', '') or ''
+                            if content:
+                                break
+                if not content:
+                    raw = getattr(message, '_data', {}) or {}
+                    for snap in raw.get('message_snapshots', []):
+                        content = snap.get('message', {}).get('content', '') or ''
+                        if content:
+                            break
+
+            if not content and message.embeds:
+                content = "\n".join(
+                    (e.description or "") + "\n" + "\n".join(f.value for f in e.fields)
+                    for e in message.embeds
+                )
+
+            if not content:
+                continue
+
+            results = parse_event_message(content)
+            if not results:
+                continue
+
+            for date_start, date_end, raw_date, events in results:
+                _save_events(interaction.guild_id, events, date_start, date_end, raw_date)
+                found_sections += 1
+                found_events += len(events)
+            break
+
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "❌ Missing **Read Message History** permission in the events channel.", ephemeral=True
+        )
+        return
+
+    if found_sections > 0:
+        await interaction.followup.send(
+            f"✅ Reloaded — found **{found_events} events** across **{found_sections} weekend(s)**. "
+            f"`/events` is up to date.", ephemeral=True
+        )
+    else:
+        await interaction.followup.send(
+            f"ℹ️ No event schedule found in the last {scanned} messages in <#{channel_id}>.",
+            ephemeral=True
+        )
+
+
+@sf_events_reload.error
+async def sf_events_reload_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("❌ You need **Manage Server** permission for this.", ephemeral=True)
+    else:
+        print(f"sf_events_reload error: {error}")
+        if interaction.response.is_done():
+            await interaction.followup.send("❌ Something went wrong.", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
 
 
 # ---------------------------------------------------------------------------
