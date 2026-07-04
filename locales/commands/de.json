@@ -35,12 +35,16 @@
     "description": "Aktivitätsbericht hochladen",
     "options": {
       "swiat": "Weltname",
-      "screen": "Screenshot der Kampf-/Aktivitätsliste"
+      "screen": "Screenshot der Kampf-/Aktivitätsliste",
+      "data": "Berichtsdatum: TT.MM oder TT.MM.JJJJ (Standard: heute, falls weggelassen)"
     }
   },
   "wg_absent_list": {
     "description": "Abwesenheitsliste",
-    "options": { "swiat": "Weltname" }
+    "options": {
+      "swiat": "Weltname",
+      "okres": "Zeitraum, der berücksichtigt werden soll (Standard: gesamter Zeitraum)"
+    }
   },
   "wg_delete_raport": {
     "description": "Letzten zugewiesenen Bericht löschen",
@@ -50,8 +54,13 @@
     "description": "Eine Abwesenheit für ein Mitglied hinzufügen",
     "options": {
       "swiat": "Weltname",
-      "nick": "Spieler-Nickname"
+      "nick": "Spieler-Nickname",
+      "data": "Berichtsdatum: TT.MM oder TT.MM.JJJJ (Standard: heute)"
     }
+  },
+  "wg_cleanup_reports": {
+    "description": "Berichte löschen, die älter als 3 Tage sind (nach Erstellungszeit) für eine Welt",
+    "options": { "swiat": "Weltname" }
   },
   "wg_delete_absent": {
     "description": "Eine Abwesenheit für ein Mitglied löschen",
@@ -109,8 +118,8 @@
     "description": "Das SF-Event-Tracking-Modul aktivieren oder deaktivieren (nur Admin).",
     "options": { "state": "True zum Aktivieren, False zum Deaktivieren" }
   },
-  "sf_events_debug": {
-    "description": "SF-Events-Konfiguration und DB-Inhalt anzeigen (nur Admin)."
+  "sf_events_reload": {
+    "description": "Den Event-Kanal-Verlauf erneut scannen und den Zeitplan aktualisieren (nur Admin)."
   },
   "events": {
     "description": "Aktuelle und bevorstehende In-Game-Events für dieses Wochenende anzeigen."
