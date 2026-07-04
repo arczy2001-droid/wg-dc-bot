@@ -25,6 +25,7 @@ from sf_events import (
     handle_event_webhook,
     sf_events_setup,
     sf_events_toggle,
+    sf_events_reload,
     events as events_command,
 )
 
@@ -38,10 +39,77 @@ DB_PATH = "gildia.db"
 def init_db():
     conn = sqlite3.connect("gildia.db")
     c = conn.cursor()
-    c.execute("CREATE TABLE IF NOT EXISTS nieobecnosci (guild_id TEXT, swiat TEXT, nick TEXT, data_wpisu TIMESTAMP)")
+
+    # ---------------------------------------------------------------------------
+    # nieobecnosci — DUAL TIMESTAMP MIGRATION
+    #   data_raportu : date of the actual battle/report (for ranking queries)
+    #   data_wpisu   : system time the row was INSERT-ed (for auto-cleanup only)
+    #
+    # If the table already exists with only data_wpisu (old schema), ADD the new
+    # column and back-fill it from data_wpisu so existing data keeps working.
+    # CREATE TABLE IF NOT EXISTS is skipped for already-existing tables, so we
+    # must check the column list explicitly.
+    # ---------------------------------------------------------------------------
+    existing_cols_n = {row[1] for row in c.execute("PRAGMA table_info(nieobecnosci)").fetchall()}
+    if not existing_cols_n:
+        # Brand-new install — create with full schema, correct column order
+        c.execute("""CREATE TABLE nieobecnosci (
+            guild_id     TEXT,
+            swiat        TEXT,
+            nick         TEXT,
+            data_raportu TEXT,
+            data_wpisu   TIMESTAMP
+        )""")
+    elif "data_raportu" not in existing_cols_n:
+        # Old schema detected. IMPORTANT: we rebuild the table (rather than
+        # ALTER TABLE ADD COLUMN) so column order matches fresh installs
+        # exactly — ADD COLUMN always appends at the end, which would leave
+        # migrated tables with (..., data_wpisu, data_raportu) instead of
+        # (..., data_raportu, data_wpisu), silently breaking any positional
+        # INSERT/SELECT that assumes the standard column order.
+        c.execute("ALTER TABLE nieobecnosci RENAME TO nieobecnosci_old")
+        c.execute("""CREATE TABLE nieobecnosci (
+            guild_id     TEXT,
+            swiat        TEXT,
+            nick         TEXT,
+            data_raportu TEXT,
+            data_wpisu   TIMESTAMP
+        )""")
+        c.execute("""
+            INSERT INTO nieobecnosci (guild_id, swiat, nick, data_raportu, data_wpisu)
+            SELECT guild_id, swiat, nick, date(data_wpisu), data_wpisu FROM nieobecnosci_old
+        """)
+        c.execute("DROP TABLE nieobecnosci_old")
+        print("init_db: migrated nieobecnosci to new schema (rebuilt with correct column order)")
+
+    # ---------------------------------------------------------------------------
+    # raporty — same rebuild-based migration for the same reason
+    # ---------------------------------------------------------------------------
+    existing_cols_r = {row[1] for row in c.execute("PRAGMA table_info(raporty)").fetchall()}
+    if not existing_cols_r:
+        c.execute("""CREATE TABLE raporty (
+            guild_id     TEXT,
+            swiat        TEXT,
+            data_raportu TEXT,
+            data_wpisu   TIMESTAMP
+        )""")
+    elif "data_raportu" not in existing_cols_r:
+        c.execute("ALTER TABLE raporty RENAME TO raporty_old")
+        c.execute("""CREATE TABLE raporty (
+            guild_id     TEXT,
+            swiat        TEXT,
+            data_raportu TEXT,
+            data_wpisu   TIMESTAMP
+        )""")
+        c.execute("""
+            INSERT INTO raporty (guild_id, swiat, data_raportu, data_wpisu)
+            SELECT guild_id, swiat, date(data_wpisu), data_wpisu FROM raporty_old
+        """)
+        c.execute("DROP TABLE raporty_old")
+        print("init_db: migrated raporty to new schema (rebuilt with correct column order)")
+
     c.execute("CREATE TABLE IF NOT EXISTS czlonkowie (guild_id TEXT, swiat TEXT, nick TEXT, PRIMARY KEY (guild_id, swiat, nick))")
     c.execute("CREATE TABLE IF NOT EXISTS swiaty (guild_id TEXT, nazwa TEXT, kanal_id TEXT, PRIMARY KEY (guild_id, nazwa))")
-    c.execute("CREATE TABLE IF NOT EXISTS raporty (guild_id TEXT, swiat TEXT, data_wpisu TIMESTAMP)")
     # Perceptual hash blocklist — shared across ALL guilds so if any server
     # sees a scam image first, every other server is immediately protected too.
     # hash_value: hex string of the 64-bit pHash
@@ -230,6 +298,7 @@ class MyBot(commands.Bot):
         self.tree.add_command(settings_command)
         self.tree.add_command(sf_events_setup)
         self.tree.add_command(sf_events_toggle)
+        self.tree.add_command(sf_events_reload)
         self.tree.add_command(events_command)
         await self.tree.set_translator(CommandTranslator())  # must be set before sync()
         self.czyszczenie.start()
@@ -238,8 +307,12 @@ class MyBot(commands.Bot):
 
     @tasks.loop(hours=1)
     async def czyszczenie(self):
+        # Purge rows whose CREATION timestamp (data_wpisu) is older than 31 days.
+        # We deliberately use data_wpisu (not data_raportu) here so that a
+        # back-dated report submitted today is kept for the full retention window
+        # rather than being instantly purged because its data_raportu is old.
         conn = sqlite3.connect("gildia.db")
-        granica = datetime.now() - timedelta(days=7, hours=1)
+        granica = datetime.now() - timedelta(days=31)
         conn.cursor().execute("DELETE FROM nieobecnosci WHERE data_wpisu <= ?", (granica,))
         conn.cursor().execute("DELETE FROM raporty WHERE data_wpisu <= ?", (granica,))
         conn.commit(); conn.close()
@@ -421,10 +494,73 @@ async def wg_member_list(interaction: discord.Interaction, swiat: str):
     embed.set_footer(text=translator.get_text(interaction.guild_id, "members.list_footer", count=len(res)))
     await interaction.response.send_message(embed=embed)
 
+def _parse_report_date(data_str: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """
+    Parses and validates the user-supplied date string for a report.
+
+    Accepts:
+        None          → today's date (default)
+        "DD.MM"       → appends current year automatically
+        "DD.MM.YYYY"  → used as-is
+
+    Returns:
+        (iso_date_str, display_str) on success  e.g. ("2026-07-04", "04.07.2026")
+        (None, error_message)       on failure
+    """
+    today = datetime.now()
+
+    if data_str is None:
+        iso = today.strftime("%Y-%m-%d")
+        display = today.strftime("%d.%m.%Y")
+        return iso, display
+
+    data_str = data_str.strip()
+
+    # Try DD.MM format (1-2 digits each) — append current year
+    if re.fullmatch(r'\d{1,2}\.\d{1,2}', data_str):
+        data_str = f"{data_str}.{today.year}"
+
+    # Now expect D.M.YYYY or DD.MM.YYYY (1-2 digits for day/month, 4 for year)
+    if not re.fullmatch(r'\d{1,2}\.\d{1,2}\.\d{4}', data_str):
+        return None, (
+            "❌ Invalid date format. Accepted formats:\n"
+            "• `DD.MM` — e.g. `04.07` (current year is appended automatically)\n"
+            "• `DD.MM.YYYY` — e.g. `04.07.2026`"
+        )
+
+    parts = data_str.split(".")
+    try:
+        day, month, year = int(parts[0]), int(parts[1]), int(parts[2])
+        parsed = datetime(year, month, day)  # raises ValueError for invalid dates like 31.02
+    except ValueError:
+        return None, (
+            f"❌ `{data_str}` is not a valid calendar date (e.g. 31 February doesn't exist).\n"
+            "Please double-check the day and month."
+        )
+
+    iso = parsed.strftime("%Y-%m-%d")
+    display = parsed.strftime("%d.%m.%Y")
+    return iso, display
+
+
 @bot.tree.command(name="wg", description="Upload the activity report")
-async def wg(interaction: discord.Interaction, swiat: str, screen: discord.Attachment):
+@app_commands.describe(
+    swiat="World name",
+    screen="Screenshot of the battle/activity list",
+    data="Report date: DD.MM or DD.MM.YYYY (defaults to today if omitted)"
+)
+async def wg(interaction: discord.Interaction, swiat: str, screen: discord.Attachment, data: Optional[str] = None):
     if not await sprawdz_pozwolenie(interaction): return
     await interaction.response.defer()
+
+    # --- Date parsing & validation ---
+    data_raportu, display_or_error = _parse_report_date(data)
+    if data_raportu is None:
+        # display_or_error holds the user-facing error message
+        await interaction.followup.send(display_or_error, ephemeral=True)
+        return
+    display_date = display_or_error  # rename for clarity from here on
+
     conn = sqlite3.connect("gildia.db")
     gid = str(interaction.guild_id)
     swiat_data = conn.cursor().execute(
@@ -453,11 +589,18 @@ async def wg(interaction: discord.Interaction, swiat: str, screen: discord.Attac
             if nick not in nieobecni:
                 nieobecni.append(nick)
 
+    # data_raportu: the user-specified (or defaulted) report date — used for rankings
+    # data_wpisu:   right now — used only for auto-cleanup
     teraz = datetime.now()
-    conn.cursor().execute("INSERT INTO raporty VALUES (?, ?, ?)", (gid, swiat.lower(), teraz))
-
+    conn.cursor().execute(
+        "INSERT INTO raporty (guild_id, swiat, data_raportu, data_wpisu) VALUES (?, ?, ?, ?)",
+        (gid, swiat.lower(), data_raportu, teraz)
+    )
     for n in nieobecni:
-        conn.cursor().execute("INSERT INTO nieobecnosci VALUES (?, ?, ?, ?)", (gid, swiat.lower(), n, teraz))
+        conn.cursor().execute(
+            "INSERT INTO nieobecnosci (guild_id, swiat, nick, data_raportu, data_wpisu) VALUES (?, ?, ?, ?, ?)",
+            (gid, swiat.lower(), n, data_raportu, teraz)
+        )
 
     conn.commit(); conn.close()
     if os.path.exists(path): os.remove(path)
@@ -466,38 +609,79 @@ async def wg(interaction: discord.Interaction, swiat: str, screen: discord.Attac
 
     try:
         target_chan = bot.get_channel(int(swiat_data[0])) or await bot.fetch_channel(int(swiat_data[0]))
+        # Include the report date in the world-channel message so it's clear
+        # which battle the report refers to, especially for back-dated reports.
         await target_chan.send(
-            translator.get_text(interaction.guild_id, "wg.inactive_players", world=swiat.upper(), players=opis_nieobecnych)
+            translator.get_text(
+                interaction.guild_id, "wg.inactive_players",
+                world=swiat.upper(), players=opis_nieobecnych
+            ) + f"\n📅 `{display_date}`"
         )
         await interaction.followup.send(
             translator.get_text(interaction.guild_id, "wg.report_sent", channel=target_chan.mention)
+            + f" (📅 `{display_date}`)"
         )
     except Exception as e:
         print(f"Error sending the report to the world channel: {e}")
         await interaction.followup.send("✅ Report processed, but I couldn't notify the world channel (check its permissions).")
 
+OKRES_CHOICES = [
+    app_commands.Choice(name="Last 7 days",         value="7d"),
+    app_commands.Choice(name="Last 14 days",         value="14d"),
+    app_commands.Choice(name="Last 31 days (month)", value="31d"),
+    app_commands.Choice(name="All time",             value="all"),
+]
+
 @bot.tree.command(name="wg_absent_list", description="List of absences")
-async def wg_absent_list(interaction: discord.Interaction, swiat: str):
+@app_commands.choices(okres=OKRES_CHOICES)
+@app_commands.describe(
+    swiat="World name",
+    okres="Time window to include (default: all time)"
+)
+async def wg_absent_list(interaction: discord.Interaction, swiat: str, okres: Optional[app_commands.Choice[str]] = None):
     if not await sprawdz_pozwolenie(interaction): return
     await interaction.response.defer()
 
     conn = sqlite3.connect("gildia.db")
     gid = str(interaction.guild_id)
+    okres_val = okres.value if okres else "all"
+
+    # Build the optional date filter on data_raportu (the actual battle date,
+    # not the creation timestamp) so filtering "last 7 days" means battles
+    # that happened in the last 7 days, not just rows recently inserted.
+    if okres_val == "all":
+        date_filter = ""
+        date_params: tuple = (gid, swiat.lower())
+        okres_label = "All time"
+    else:
+        days = int(okres_val.replace("d", ""))
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        date_filter = "AND data_raportu >= ?"
+        date_params = (gid, swiat.lower(), cutoff)
+        okres_label = {
+            "7d": "Last 7 days", "14d": "Last 14 days", "31d": "Last 31 days"
+        }.get(okres_val, okres_val)
+
     liczba_raportow = conn.cursor().execute(
-        "SELECT COUNT(*) FROM raporty WHERE guild_id=? AND swiat=?", (gid, swiat.lower())
+        f"SELECT COUNT(*) FROM raporty WHERE guild_id=? AND swiat=? {date_filter}",
+        date_params
     ).fetchone()[0]
+
     res = conn.cursor().execute(
-        "SELECT nick, COUNT(*) FROM nieobecnosci WHERE guild_id=? AND swiat=? GROUP BY nick ORDER BY COUNT(*) DESC",
-        (gid, swiat.lower())
+        f"""SELECT nick, COUNT(*) FROM nieobecnosci
+            WHERE guild_id=? AND swiat=? {date_filter}
+            GROUP BY nick ORDER BY COUNT(*) DESC""",
+        date_params
     ).fetchall()
     conn.close()
 
     txt = "\n".join([f"{r[0]}: {r[1]}x" for r in res]) if res else translator.get_text(interaction.guild_id, "wg.no_absences")
     naglowek = translator.get_text(
-        interaction.guild_id, "wg.absent_list_header", world=swiat.upper(), report_count=liczba_raportow
+        interaction.guild_id, "wg.absent_list_header",
+        world=swiat.upper(), report_count=liczba_raportow
     )
 
-    await interaction.followup.send(f"{naglowek}\n{txt}")
+    await interaction.followup.send(f"{naglowek} *(⏱ {okres_label})*\n{txt}")
 
 @bot.tree.command(name="wg_delete_raport", description="Deleting last assigned report")
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -527,16 +711,25 @@ async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
 
 @bot.tree.command(name="wg_add_absent", description="Add single absence to a member")
 @app_commands.checks.has_permissions(manage_guild=True)
-async def wg_add_absent(interaction: discord.Interaction, swiat: str, nick: str):
+@app_commands.describe(
+    swiat="World name", nick="Player nickname",
+    data="Report date: DD.MM or DD.MM.YYYY (defaults to today)"
+)
+async def wg_add_absent(interaction: discord.Interaction, swiat: str, nick: str, data: Optional[str] = None):
     if not await sprawdz_pozwolenie(interaction): return
+    data_raportu, display_or_error = _parse_report_date(data)
+    if data_raportu is None:
+        await interaction.response.send_message(display_or_error, ephemeral=True)
+        return
     conn = sqlite3.connect("gildia.db")
     conn.cursor().execute(
-        "INSERT INTO nieobecnosci VALUES (?, ?, ?, ?)",
-        (str(interaction.guild_id), swiat.lower(), nick, datetime.now())
+        "INSERT INTO nieobecnosci (guild_id, swiat, nick, data_raportu, data_wpisu) VALUES (?, ?, ?, ?, ?)",
+        (str(interaction.guild_id), swiat.lower(), nick, data_raportu, datetime.now())
     )
     conn.commit(); conn.close()
     await interaction.response.send_message(
         translator.get_text(interaction.guild_id, "reports.absence_added", nick=nick)
+        + f" (📅 `{display_or_error}`)"
     )
 
 @bot.tree.command(name="wg_delete_absent", description="Delete single absence for a member")
@@ -566,6 +759,64 @@ async def wg_clear_all(interaction: discord.Interaction):
     conn.cursor().execute("DELETE FROM raporty WHERE guild_id=?", (gid,))
     conn.commit(); conn.close()
     await interaction.response.send_message(translator.get_text(interaction.guild_id, "reports.all_cleared"))
+
+@bot.tree.command(name="wg_cleanup_reports", description="Delete reports older than 3 days (by creation time) for one world")
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.describe(swiat="World name")
+async def wg_cleanup_reports(interaction: discord.Interaction, swiat: str):
+    if not await sprawdz_pozwolenie(interaction): return
+    gid = str(interaction.guild_id)
+    swiat_lower = swiat.lower()
+
+    conn = sqlite3.connect("gildia.db")
+    world_exists = conn.execute("SELECT 1 FROM swiaty WHERE guild_id=? AND nazwa=?", (gid, swiat_lower)).fetchone()
+    if not world_exists:
+        conn.close()
+        await interaction.response.send_message(translator.get_text(interaction.guild_id, "wg.unknown_world"))
+        return
+
+    # Cutoff is based on data_wpisu (creation time), NOT data_raportu — this
+    # deletes reports that were physically entered into the DB more than 3
+    # days ago, regardless of what battle date they were backdated to.
+    cutoff = datetime.now() - timedelta(days=3)
+
+    # Count first so we can report exact numbers back to the admin
+    raporty_count = conn.execute(
+        "SELECT COUNT(*) FROM raporty WHERE guild_id=? AND swiat=? AND data_wpisu <= ?",
+        (gid, swiat_lower, cutoff)
+    ).fetchone()[0]
+    absences_count = conn.execute(
+        "SELECT COUNT(*) FROM nieobecnosci WHERE guild_id=? AND swiat=? AND data_wpisu <= ?",
+        (gid, swiat_lower, cutoff)
+    ).fetchone()[0]
+
+    conn.execute(
+        "DELETE FROM raporty WHERE guild_id=? AND swiat=? AND data_wpisu <= ?",
+        (gid, swiat_lower, cutoff)
+    )
+    conn.execute(
+        "DELETE FROM nieobecnosci WHERE guild_id=? AND swiat=? AND data_wpisu <= ?",
+        (gid, swiat_lower, cutoff)
+    )
+    conn.commit()
+    conn.close()
+
+    embed = discord.Embed(
+        title="🧹 Cleanup complete",
+        description=f"World: **{swiat.upper()}**\nCutoff: reports created before **{cutoff.strftime('%d.%m.%Y %H:%M')}**",
+        color=discord.Color.orange()
+    )
+    embed.add_field(name="Reports deleted", value=str(raporty_count), inline=True)
+    embed.add_field(name="Absence entries deleted", value=str(absences_count), inline=True)
+    await interaction.response.send_message(embed=embed)
+
+@wg_cleanup_reports.error
+async def wg_cleanup_reports_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("❌ You need **Manage Server** permission for this.", ephemeral=True)
+    else:
+        print(f"wg_cleanup_reports error: {error}")
+        await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
 
 WEEKDAY_CHOICES = [
     app_commands.Choice(name="Monday", value=0),
