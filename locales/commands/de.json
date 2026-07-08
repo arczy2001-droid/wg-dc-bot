@@ -59,8 +59,11 @@
     }
   },
   "wg_cleanup_reports": {
-    "description": "Berichte löschen, die älter als 3 Tage sind (nach Erstellungszeit) für eine Welt",
-    "options": { "swiat": "Weltname" }
+    "description": "Berichte für eine Welt löschen — entweder nach genauem Datum oder nach Alter",
+    "options": {
+      "swiat": "Weltname",
+      "data": "Optional: nur Berichte für dieses genaue Kampfdatum löschen (TT.MM oder TT.MM.JJJJ). Falls weggelassen, werden stattdessen Berichte gelöscht, die älter als 3 Tage sind (nach Erstellungszeit)."
+    }
   },
   "wg_delete_absent": {
     "description": "Eine Abwesenheit für ein Mitglied löschen",
@@ -123,5 +126,13 @@
   },
   "events": {
     "description": "Aktuelle und bevorstehende In-Game-Events für dieses Wochenende anzeigen."
+  },
+  "recruitment_panel": {
+    "description": "Das Gilden-Rekrutierungs-Bewerbungspanel veröffentlichen (nur Admin).",
+    "options": {
+      "channel": "Kanal, in dem das Rekrutierungspanel veröffentlicht wird",
+      "officer_role": "Rolle, die Bewerbungen prüfen und entscheiden kann",
+      "member_role": "Optional: Rolle, die angenommenen Bewerbern automatisch vergeben wird"
+    }
   }
 }
