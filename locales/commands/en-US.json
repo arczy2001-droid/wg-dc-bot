@@ -1,138 +1,138 @@
 {
   "wg_add_world": {
-    "description": "Add world and assign a channel",
+    "description": "Dodaj świat i przypisz kanał",
     "options": {
-      "nazwa": "World name",
-      "kanal": "Channel where this world's reports will be posted"
+      "nazwa": "Nazwa świata",
+      "kanal": "Kanał, na który będą wysyłane raporty tego świata"
     }
   },
   "wg_delete_world": {
-    "description": "Deleting world",
-    "options": { "nazwa": "World name to delete" }
+    "description": "Usuwanie świata",
+    "options": { "nazwa": "Nazwa świata do usunięcia" }
   },
   "wg_worlds": {
-    "description": "List of the worlds"
+    "description": "Lista światów"
   },
   "wg_add_member": {
-    "description": "Assign players to a world",
+    "description": "Przypisz graczy do świata",
     "options": {
-      "swiat": "World name",
-      "lista": "Player nicknames, separated by commas or new lines"
+      "swiat": "Nazwa świata",
+      "lista": "Nicki graczy, oddzielone przecinkami lub nowymi liniami"
     }
   },
   "wg_delete_member": {
-    "description": "Deleting player",
+    "description": "Usuwanie gracza",
     "options": {
-      "swiat": "World name",
-      "nick": "Player nickname to remove"
+      "swiat": "Nazwa świata",
+      "nick": "Nick gracza do usunięcia"
     }
   },
   "wg_member_list": {
-    "description": "Member list",
-    "options": { "swiat": "World name" }
+    "description": "Lista członków",
+    "options": { "swiat": "Nazwa świata" }
   },
   "wg": {
-    "description": "Upload the activity report",
+    "description": "Prześlij raport aktywności",
     "options": {
-      "swiat": "World name",
-      "screen": "Screenshot of the battle/activity list",
-      "data": "Report date: DD.MM or DD.MM.YYYY (defaults to today if omitted)"
+      "swiat": "Nazwa świata",
+      "screen": "Zrzut ekranu z listą bitwy/aktywności",
+      "data": "Data raportu: DD.MM lub DD.MM.RRRR (domyślnie dzisiaj, jeśli pominięto)"
     }
   },
   "wg_absent_list": {
-    "description": "List of absences",
+    "description": "Lista nieobecności",
     "options": {
-      "swiat": "World name",
-      "okres": "Time window to include (default: all time)"
+      "swiat": "Nazwa świata",
+      "okres": "Zakres czasu do uwzględnienia (domyślnie: cały czas)"
     }
   },
   "wg_delete_raport": {
-    "description": "Deleting last assigned report",
-    "options": { "swiat": "World name" }
+    "description": "Usuwanie ostatniego przypisanego raportu",
+    "options": { "swiat": "Nazwa świata" }
   },
   "wg_add_absent": {
-    "description": "Add single absence to a member",
+    "description": "Dodaj pojedynczą nieobecność dla gracza",
     "options": {
-      "swiat": "World name",
-      "nick": "Player nickname",
-      "data": "Report date: DD.MM or DD.MM.YYYY (defaults to today)"
+      "swiat": "Nazwa świata",
+      "nick": "Nick gracza",
+      "data": "Data raportu: DD.MM lub DD.MM.RRRR (domyślnie dzisiaj)"
     }
   },
   "wg_cleanup_reports": {
-    "description": "Delete reports for one world — either by exact date or by age",
+    "description": "Usuń raporty dla jednego świata — według konkretnej daty lub wieku",
     "options": {
-      "swiat": "World name",
-      "data": "Optional: delete only reports for this exact battle date (DD.MM or DD.MM.YYYY). If omitted, deletes reports older than 3 days by creation time instead."
+      "swiat": "Nazwa świata",
+      "data": "Opcjonalnie: usuń tylko raporty dla tej konkretnej daty bitwy (DD.MM lub DD.MM.RRRR). Jeśli pominięto, usuwa raporty starsze niż 3 dni wg czasu utworzenia."
     }
   },
   "wg_delete_absent": {
-    "description": "Delete single absence for a member",
+    "description": "Usuń pojedynczą nieobecność dla gracza",
     "options": {
-      "swiat": "World name",
-      "nick": "Player nickname"
+      "swiat": "Nazwa świata",
+      "nick": "Nick gracza"
     }
   },
   "wg_clear_all": {
-    "description": "Clearing every absence report (this server only)"
+    "description": "Czyszczenie wszystkich raportów nieobecności (tylko ten serwer)"
   },
   "test_scrapera": {
-    "description": "Test the bot's connection to SFDataHub"
+    "description": "Testuje połączenie bota z SFDataHub"
   },
   "setup": {
-    "description": "Run the one-time server configuration wizard (admin only)."
+    "description": "Uruchom jednorazowego kreatora konfiguracji serwera (tylko admin)."
   },
   "setup_reset": {
-    "description": "Unlock configuration so /setup can be run again (admin only)."
+    "description": "Odblokuj konfigurację, aby móc ponownie uruchomić /setup (tylko admin)."
   },
   "wg_set_ranking": {
-    "description": "Configure or disable the automatic weekly absence ranking for one world",
+    "description": "Skonfiguruj lub wyłącz automatyczny cotygodniowy ranking nieobecności dla jednego świata",
     "options": {
-      "swiat": "World this schedule applies to",
-      "enabled": "Turn the automatic weekly ranking on or off for this world",
-      "weekday": "Day of the week to post it (only used if enabled)",
-      "hour": "Hour, 24h format (only used if enabled)",
-      "minute": "Minute (only used if enabled)"
+      "swiat": "Świat, którego dotyczy ten harmonogram",
+      "enabled": "Włącz lub wyłącz automatyczny cotygodniowy ranking dla tego świata",
+      "weekday": "Dzień tygodnia, w którym ma być publikowany (tylko gdy włączony)",
+      "hour": "Godzina, format 24h (tylko gdy włączony)",
+      "minute": "Minuta (tylko gdy włączony)"
     }
   },
   "wg_ranking_status": {
-    "description": "Show the current automatic ranking schedule",
+    "description": "Pokaż aktualny harmonogram automatycznego rankingu",
     "options": {
-      "swiat": "Show only this world's schedule (omit to list every world)"
+      "swiat": "Pokaż harmonogram tylko dla tego świata (pomiń, aby zobaczyć wszystkie)"
     }
   },
   "settings": {
-    "description": "Change a single server setting without resetting everything (admin only)."
+    "description": "Zmień jedno ustawienie serwera bez resetowania wszystkiego (tylko admin)."
   },
   "wg_block_image": {
-    "description": "Manually add an image to the scam blocklist",
+    "description": "Ręcznie dodaj obraz do listy blokowanych scamów",
     "options": {
-      "image": "The image to block",
-      "reason": "Why this image is being blocked (optional)"
+      "image": "Obraz do zablokowania",
+      "reason": "Powód blokowania (opcjonalnie)"
     }
   },
   "wg_blocklist_stats": {
-    "description": "Show how many images are in the scam hash blocklist"
+    "description": "Pokaż liczbę obrazów na liście blokowanych scamów"
   },
   "sf_events_setup": {
-    "description": "Set the channel where official game event webhooks arrive (admin only).",
-    "options": { "channel": "The channel that receives official game news/event webhooks" }
+    "description": "Ustaw kanał, na którym pojawiają się webhooki z oficjalnymi wydarzeniami (tylko admin).",
+    "options": { "channel": "Kanał, który odbiera oficjalne wiadomości/webhooki z wydarzeniami" }
   },
   "sf_events_toggle": {
-    "description": "Enable or disable the SF events tracking module (admin only).",
-    "options": { "state": "True to enable, False to disable" }
+    "description": "Włącz lub wyłącz moduł śledzenia wydarzeń SF (tylko admin).",
+    "options": { "state": "True aby włączyć, False aby wyłączyć" }
   },
   "sf_events_reload": {
-    "description": "Re-scan the events channel history and reload the event schedule (admin only)."
+    "description": "Przeskanuj historię kanału wydarzeń i odśwież harmonogram (tylko admin)."
   },
   "events": {
-    "description": "Show current and upcoming in-game events for this weekend."
+    "description": "Pokaż aktualne i nadchodzące wydarzenia w grze na ten weekend."
   },
   "recruitment_panel": {
-    "description": "Post the guild recruitment application panel (admin only).",
+    "description": "Opublikuj panel rekrutacji do gildii (tylko admin).",
     "options": {
-      "channel": "Channel to post the recruitment panel in",
-      "officer_role": "Role that can review and decide on applications",
-      "member_role": "Optional: role automatically given to accepted applicants"
+      "channel": "Kanał, na którym ma pojawić się panel rekrutacji",
+      "officer_role": "Rola, która może rozpatrywać i decydować o podaniach",
+      "member_role": "Opcjonalnie: rola nadawana automatycznie przyjętym kandydatom"
     }
   }
 }
