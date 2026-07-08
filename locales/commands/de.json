@@ -134,5 +134,20 @@
       "officer_role": "Rolle, die Bewerbungen prüfen und entscheiden kann",
       "member_role": "Optional: Rolle, die angenommenen Bewerbern automatisch vergeben wird"
     }
+  },
+  "attack_setup": {
+    "description": "Alarmkanal und Ping-Rolle für Angriffsbenachrichtigungen einer Welt konfigurieren.",
+    "options": {
+      "world_name": "Weltname (z.B. eu20)",
+      "channel": "Kanal, in dem Angriffsalarme für diese Welt gepostet werden",
+      "ping_role": "Rolle, die beim Auslösen eines Angriffsalarms für diese Welt gepingt wird"
+    }
+  },
+  "attack": {
+    "description": "Einen Gildenangriff für eine bestimmte Welt auslösen.",
+    "options": {
+      "world_name": "Weltname (z.B. eu20)",
+      "time": "Angriffszeit, z.B. 20:00 (weglassen für einen sofortigen 'jetzt'-Alarm)"
+    }
   }
 }
