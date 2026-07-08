@@ -59,8 +59,11 @@
     }
   },
   "wg_cleanup_reports": {
-    "description": "Usuń raporty starsze niż 3 dni (wg czasu utworzenia) dla jednego świata",
-    "options": { "swiat": "Nazwa świata" }
+    "description": "Usuń raporty dla jednego świata — według konkretnej daty lub wieku",
+    "options": {
+      "swiat": "Nazwa świata",
+      "data": "Opcjonalnie: usuń tylko raporty dla tej konkretnej daty bitwy (DD.MM lub DD.MM.RRRR). Jeśli pominięto, usuwa raporty starsze niż 3 dni wg czasu utworzenia."
+    }
   },
   "wg_delete_absent": {
     "description": "Usuń pojedynczą nieobecność dla gracza",
@@ -123,5 +126,28 @@
   },
   "events": {
     "description": "Pokaż aktualne i nadchodzące wydarzenia w grze na ten weekend."
+  },
+  "recruitment_panel": {
+    "description": "Opublikuj panel rekrutacji do gildii (tylko admin).",
+    "options": {
+      "channel": "Kanał, na którym ma pojawić się panel rekrutacji",
+      "officer_role": "Rola, która może rozpatrywać i decydować o podaniach",
+      "member_role": "Opcjonalnie: rola nadawana automatycznie przyjętym kandydatom"
+    }
+  },
+  "attack_setup": {
+    "description": "Skonfiguruj kanał alertów i rolę do oznaczenia dla powiadomień o ataku na dany świat.",
+    "options": {
+      "world_name": "Nazwa świata (np. eu20)",
+      "channel": "Kanał, na którym będą publikowane alerty ataku dla tego świata",
+      "ping_role": "Rola oznaczana przy wywołaniu alertu ataku dla tego świata"
+    }
+  },
+  "attack": {
+    "description": "Wywołaj alert ataku gildii dla konkretnego świata.",
+    "options": {
+      "world_name": "Nazwa świata (np. eu20)",
+      "time": "Godzina ataku, np. 20:00 (pomiń dla natychmiastowego alertu 'teraz')"
+    }
   }
 }
