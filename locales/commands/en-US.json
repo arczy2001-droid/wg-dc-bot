@@ -59,8 +59,11 @@
     }
   },
   "wg_cleanup_reports": {
-    "description": "Delete reports older than 3 days (by creation time) for one world",
-    "options": { "swiat": "World name" }
+    "description": "Delete reports for one world — either by exact date or by age",
+    "options": {
+      "swiat": "World name",
+      "data": "Optional: delete only reports for this exact battle date (DD.MM or DD.MM.YYYY). If omitted, deletes reports older than 3 days by creation time instead."
+    }
   },
   "wg_delete_absent": {
     "description": "Delete single absence for a member",
@@ -123,5 +126,13 @@
   },
   "events": {
     "description": "Show current and upcoming in-game events for this weekend."
+  },
+  "recruitment_panel": {
+    "description": "Post the guild recruitment application panel (admin only).",
+    "options": {
+      "channel": "Channel to post the recruitment panel in",
+      "officer_role": "Role that can review and decide on applications",
+      "member_role": "Optional: role automatically given to accepted applicants"
+    }
   }
 }
