@@ -62,7 +62,7 @@
     "description": "Berichte für eine Welt löschen — entweder nach genauem Datum oder nach Alter",
     "options": {
       "swiat": "Weltname",
-      "data": "Optional: nur Berichte für dieses genaue Kampfdatum löschen (TT.MM oder TT.MM.JJJJ). Falls weggelassen, werden stattdessen Berichte gelöscht, die älter als 3 Tage sind (nach Erstellungszeit)."
+      "data": "Genaues Kampfdatum (TT.MM[.JJJJ]). Ohne Angabe werden Berichte älter als 3 Tage gelöscht."
     }
   },
   "wg_delete_absent": {
