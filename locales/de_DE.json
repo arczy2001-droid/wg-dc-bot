@@ -41,5 +41,15 @@
   "security": {
     "phishing_blocked": "🛡️ **Ein gefährlicher Link wurde blockiert!** {mention} hat versucht, einen SCAM zu senden.",
     "scam_image_blocked": "🛡️ **Verdächtiges Scam-Bild blockiert!** Der Anhang von {mention} entspricht bekannten Betrugsmustern."
+  },
+  "recruitment": {
+    "app_title": "📝 Bewerbung: {nickname}",
+    "field_nickname": "Nickname im Spiel",
+    "field_class": "Charakterklasse",
+    "field_playstyle": "Spielstil",
+    "field_experience": "Erfahrung / Erfolge",
+    "app_footer": "Bewerbung #{app_id}",
+    "dm_accepted": "🎉 Glückwunsch! Deine Bewerbung bei **{guild}** wurde angenommen. Dein Nickname wurde auf **{nickname}** gesetzt. Willkommen an Bord!",
+    "dm_rejected": "Leider wurde deine Bewerbung bei **{guild}** dieses Mal nicht angenommen.\n\n**Grund:** {reason}\n\nDu kannst dich gerne in Zukunft erneut bewerben."
   }
 }
