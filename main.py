@@ -780,8 +780,7 @@ async def wg_clear_all(interaction: discord.Interaction):
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.describe(
     swiat="World name",
-    data="Optional: delete only reports for this exact battle date (DD.MM or DD.MM.YYYY). "
-         "If omitted, deletes reports older than 3 days by creation time instead."
+    data="Exact battle date to delete (DD.MM[.YYYY]). Omit to delete reports older than 3 days."
 )
 async def wg_cleanup_reports(interaction: discord.Interaction, swiat: str, data: Optional[str] = None):
     if not await sprawdz_pozwolenie(interaction): return
@@ -1046,7 +1045,33 @@ async def wg_blocklist_stats(interaction: discord.Interaction):
         lines.append(f"`{h[:16]}...` — {rsn} (guild {guild}, {ts[:10]})")
     await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
+@bot.tree.command(name="test_scrapera", description="Test połączenia bota z SFDataHub")
+async def test_scrapera(interaction: discord.Interaction):
+    await interaction.response.defer()
 
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            url = "https://sfdatahub.com/#/toplists"
+            await page.goto(url)
+            await page.wait_for_timeout(4000)
+            tytul = await page.title()
+            surowy_tekst = await page.locator("body").inner_text()
+            podglad_tekstu = surowy_tekst[:600]
+
+            await browser.close()
+
+            odpowiedz = (
+                f"✅ **Połączenie nawiązane!**\n\n"
+                f"**Tytuł karty:** `{tytul}`\n"
+                f"**Co bot widzi na stronie (fragment):**\n"
+                f"```text\n{podglad_tekstu}\n```"
+            )
+            await interaction.followup.send(odpowiedz)
+
+    except Exception as e:
+        await interaction.followup.send(f"❌ **Wystąpił błąd podczas skanowania:**\n`{e}`")
 
 # ---------------------------------------------------------------------------
 # ANTI-RAID: per-guild, per-user channel tracker
