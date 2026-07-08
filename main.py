@@ -28,6 +28,11 @@ from sf_events import (
     sf_events_reload,
     events as events_command,
 )
+from recruitment import (
+    init_recruitment_tables,
+    register_persistent_views,
+    recruitment_panel,
+)
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 OCR_API_KEY = os.getenv("OCR_SPACE_API_KEY")
@@ -293,6 +298,7 @@ class MyBot(commands.Bot):
         init_db()
         init_setup_table()
         init_sf_events_tables()
+        init_recruitment_tables()
         self.tree.add_command(setup_command)
         self.tree.add_command(setup_reset_command)
         self.tree.add_command(settings_command)
@@ -300,6 +306,8 @@ class MyBot(commands.Bot):
         self.tree.add_command(sf_events_toggle)
         self.tree.add_command(sf_events_reload)
         self.tree.add_command(events_command)
+        self.tree.add_command(recruitment_panel)
+        await register_persistent_views(self)  # re-attach buttons after restart
         await self.tree.set_translator(CommandTranslator())  # must be set before sync()
         self.czyszczenie.start()
         self.niedzielny_ranking.start()
@@ -760,10 +768,14 @@ async def wg_clear_all(interaction: discord.Interaction):
     conn.commit(); conn.close()
     await interaction.response.send_message(translator.get_text(interaction.guild_id, "reports.all_cleared"))
 
-@bot.tree.command(name="wg_cleanup_reports", description="Delete reports older than 3 days (by creation time) for one world")
+@bot.tree.command(name="wg_cleanup_reports", description="Delete reports for one world — either by exact date or by age")
 @app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.describe(swiat="World name")
-async def wg_cleanup_reports(interaction: discord.Interaction, swiat: str):
+@app_commands.describe(
+    swiat="World name",
+    data="Optional: delete only reports for this exact battle date (DD.MM or DD.MM.YYYY). "
+         "If omitted, deletes reports older than 3 days by creation time instead."
+)
+async def wg_cleanup_reports(interaction: discord.Interaction, swiat: str, data: Optional[str] = None):
     if not await sprawdz_pozwolenie(interaction): return
     gid = str(interaction.guild_id)
     swiat_lower = swiat.lower()
@@ -775,35 +787,69 @@ async def wg_cleanup_reports(interaction: discord.Interaction, swiat: str):
         await interaction.response.send_message(translator.get_text(interaction.guild_id, "wg.unknown_world"))
         return
 
-    # Cutoff is based on data_wpisu (creation time), NOT data_raportu — this
-    # deletes reports that were physically entered into the DB more than 3
-    # days ago, regardless of what battle date they were backdated to.
-    cutoff = datetime.now() - timedelta(days=3)
+    if data is not None:
+        # --- MODE 1: delete by exact battle date (data_raportu) ---
+        # Reuses the same parser /wg uses, so "15.06", "15.06.2026" etc. all work
+        # the same way here as they do when submitting a report.
+        data_raportu, display_or_error = _parse_report_date(data)
+        if data_raportu is None:
+            conn.close()
+            await interaction.response.send_message(display_or_error, ephemeral=True)
+            return
 
-    # Count first so we can report exact numbers back to the admin
-    raporty_count = conn.execute(
-        "SELECT COUNT(*) FROM raporty WHERE guild_id=? AND swiat=? AND data_wpisu <= ?",
-        (gid, swiat_lower, cutoff)
-    ).fetchone()[0]
-    absences_count = conn.execute(
-        "SELECT COUNT(*) FROM nieobecnosci WHERE guild_id=? AND swiat=? AND data_wpisu <= ?",
-        (gid, swiat_lower, cutoff)
-    ).fetchone()[0]
+        raporty_count = conn.execute(
+            "SELECT COUNT(*) FROM raporty WHERE guild_id=? AND swiat=? AND data_raportu=?",
+            (gid, swiat_lower, data_raportu)
+        ).fetchone()[0]
+        absences_count = conn.execute(
+            "SELECT COUNT(*) FROM nieobecnosci WHERE guild_id=? AND swiat=? AND data_raportu=?",
+            (gid, swiat_lower, data_raportu)
+        ).fetchone()[0]
 
-    conn.execute(
-        "DELETE FROM raporty WHERE guild_id=? AND swiat=? AND data_wpisu <= ?",
-        (gid, swiat_lower, cutoff)
-    )
-    conn.execute(
-        "DELETE FROM nieobecnosci WHERE guild_id=? AND swiat=? AND data_wpisu <= ?",
-        (gid, swiat_lower, cutoff)
-    )
-    conn.commit()
-    conn.close()
+        conn.execute(
+            "DELETE FROM raporty WHERE guild_id=? AND swiat=? AND data_raportu=?",
+            (gid, swiat_lower, data_raportu)
+        )
+        conn.execute(
+            "DELETE FROM nieobecnosci WHERE guild_id=? AND swiat=? AND data_raportu=?",
+            (gid, swiat_lower, data_raportu)
+        )
+        conn.commit()
+        conn.close()
+
+        criterion_label = f"Battle date: **{display_or_error}**"
+    else:
+        # --- MODE 2: delete by age (data_wpisu), same as before ---
+        # Cutoff is based on data_wpisu (creation time), NOT data_raportu — this
+        # deletes reports that were physically entered into the DB more than 3
+        # days ago, regardless of what battle date they were backdated to.
+        cutoff = datetime.now() - timedelta(days=3)
+
+        raporty_count = conn.execute(
+            "SELECT COUNT(*) FROM raporty WHERE guild_id=? AND swiat=? AND data_wpisu <= ?",
+            (gid, swiat_lower, cutoff)
+        ).fetchone()[0]
+        absences_count = conn.execute(
+            "SELECT COUNT(*) FROM nieobecnosci WHERE guild_id=? AND swiat=? AND data_wpisu <= ?",
+            (gid, swiat_lower, cutoff)
+        ).fetchone()[0]
+
+        conn.execute(
+            "DELETE FROM raporty WHERE guild_id=? AND swiat=? AND data_wpisu <= ?",
+            (gid, swiat_lower, cutoff)
+        )
+        conn.execute(
+            "DELETE FROM nieobecnosci WHERE guild_id=? AND swiat=? AND data_wpisu <= ?",
+            (gid, swiat_lower, cutoff)
+        )
+        conn.commit()
+        conn.close()
+
+        criterion_label = f"Cutoff: reports created before **{cutoff.strftime('%d.%m.%Y %H:%M')}**"
 
     embed = discord.Embed(
         title="🧹 Cleanup complete",
-        description=f"World: **{swiat.upper()}**\nCutoff: reports created before **{cutoff.strftime('%d.%m.%Y %H:%M')}**",
+        description=f"World: **{swiat.upper()}**\n{criterion_label}",
         color=discord.Color.orange()
     )
     embed.add_field(name="Reports deleted", value=str(raporty_count), inline=True)
