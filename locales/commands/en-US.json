@@ -62,7 +62,7 @@
     "description": "Delete reports for one world — either by exact date or by age",
     "options": {
       "swiat": "World name",
-      "data": "Optional: delete only reports for this exact battle date (DD.MM or DD.MM.YYYY). If omitted, deletes reports older than 3 days by creation time instead."
+      "data": "Exact battle date to delete (DD.MM[.YYYY]). Omit to delete reports older than 3 days."
     }
   },
   "wg_delete_absent": {
