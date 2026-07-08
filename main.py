@@ -33,6 +33,11 @@ from recruitment import (
     register_persistent_views,
     recruitment_panel,
 )
+from attack_alert import (
+    init_attack_alert_table,
+    attack_setup,
+    attack,
+)
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 OCR_API_KEY = os.getenv("OCR_SPACE_API_KEY")
@@ -299,6 +304,7 @@ class MyBot(commands.Bot):
         init_setup_table()
         init_sf_events_tables()
         init_recruitment_tables()
+        init_attack_alert_table()
         self.tree.add_command(setup_command)
         self.tree.add_command(setup_reset_command)
         self.tree.add_command(settings_command)
@@ -307,6 +313,8 @@ class MyBot(commands.Bot):
         self.tree.add_command(sf_events_reload)
         self.tree.add_command(events_command)
         self.tree.add_command(recruitment_panel)
+        self.tree.add_command(attack_setup)
+        self.tree.add_command(attack)
         await register_persistent_views(self)  # re-attach buttons after restart
         await self.tree.set_translator(CommandTranslator())  # must be set before sync()
         self.czyszczenie.start()
@@ -1038,33 +1046,7 @@ async def wg_blocklist_stats(interaction: discord.Interaction):
         lines.append(f"`{h[:16]}...` — {rsn} (guild {guild}, {ts[:10]})")
     await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
-@bot.tree.command(name="test_scrapera", description="Test połączenia bota z SFDataHub")
-async def test_scrapera(interaction: discord.Interaction):
-    await interaction.response.defer()
 
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
-            url = "https://sfdatahub.com/#/toplists"
-            await page.goto(url)
-            await page.wait_for_timeout(4000)
-            tytul = await page.title()
-            surowy_tekst = await page.locator("body").inner_text()
-            podglad_tekstu = surowy_tekst[:600]
-
-            await browser.close()
-
-            odpowiedz = (
-                f"✅ **Połączenie nawiązane!**\n\n"
-                f"**Tytuł karty:** `{tytul}`\n"
-                f"**Co bot widzi na stronie (fragment):**\n"
-                f"```text\n{podglad_tekstu}\n```"
-            )
-            await interaction.followup.send(odpowiedz)
-
-    except Exception as e:
-        await interaction.followup.send(f"❌ **Wystąpił błąd podczas skanowania:**\n`{e}`")
 
 # ---------------------------------------------------------------------------
 # ANTI-RAID: per-guild, per-user channel tracker
