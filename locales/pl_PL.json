@@ -42,5 +42,15 @@
   "security": {
     "phishing_blocked": "🛡️ **Zablokowano niebezpieczny link!** {mention} próbował wysłać SCAM.",
     "scam_image_blocked": "🛡️ **Zablokowano podejrzany obrazek!** Załącznik od {mention} odpowiada znanym wzorcom oszustwa."
+  },
+  "recruitment": {
+    "app_title": "📝 Podanie: {nickname}",
+    "field_nickname": "Nick w grze",
+    "field_class": "Klasa postaci",
+    "field_playstyle": "Styl gry",
+    "field_experience": "Doświadczenie / Osiągnięcia",
+    "app_footer": "Podanie #{app_id}",
+    "dm_accepted": "🎉 Gratulacje! Twoje podanie do **{guild}** zostało zaakceptowane. Twój nick został ustawiony na **{nickname}**. Witamy na pokładzie!",
+    "dm_rejected": "Niestety, Twoje podanie do **{guild}** nie zostało tym razem zaakceptowane.\n\n**Powód:** {reason}\n\nMożesz spróbować ponownie w przyszłości."
   }
 }
