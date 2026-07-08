@@ -62,7 +62,7 @@
     "description": "Usuń raporty dla jednego świata — według konkretnej daty lub wieku",
     "options": {
       "swiat": "Nazwa świata",
-      "data": "Opcjonalnie: usuń tylko raporty dla tej konkretnej daty bitwy (DD.MM lub DD.MM.RRRR). Jeśli pominięto, usuwa raporty starsze niż 3 dni wg czasu utworzenia."
+      "data": "Konkretna data bitwy do usunięcia (DD.MM[.RRRR]). Bez podania usuwa raporty starsze niż 3 dni."
     }
   },
   "wg_delete_absent": {
