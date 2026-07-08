@@ -199,13 +199,14 @@ async def recruitment_panel(
     embed = discord.Embed(
         title="⚔️ Join Our Guild!",
         description=(
-            "We're always looking for skilled and active heroes to join our ranks!\n\n"
+            "We're always looking for strong and active players!\n\n"
             "**What we offer:**\n"
-            "• An active, friendly community\n"
-            "• Organized guild events and coordinated raids\n"
-            "• Experienced officers to help you grow\n\n"
+            "• An active, discord community\n"
+            "• Help at every stage of the game\n"
+            "• Experienced management\n\n"
             "**What we look for:**\n"
             "• Regular activity and participation\n"
+            "• Shroomers\n"
             "• A positive attitude and teamwork\n\n"
             "Click the button below to submit your application. An officer will "
             "review it and reach out to you shortly!"
@@ -274,7 +275,7 @@ class ApplicationModal(discord.ui.Modal, title="Guild Application"):
     )
     playstyle = discord.ui.TextInput(
         label="Mushroom Budget / Playstyle",
-        placeholder="e.g. Eco, Semi-pro, Hardcore",
+        placeholder="e.g. F2P, ECO, P2W",
         max_length=100,
         required=True,
     )
