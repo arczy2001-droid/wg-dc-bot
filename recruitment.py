@@ -63,6 +63,9 @@ DB_PATH = "gildia.db"
 # DATABASE
 # ---------------------------------------------------------------------------
 
+MEMBER_ROLE_SLOTS = ("member_role_id", "member_role_id_2", "member_role_id_3", "member_role_id_4")
+
+
 def init_recruitment_tables() -> None:
     """Idempotent — safe to call on every startup."""
     conn = sqlite3.connect(DB_PATH)
@@ -74,6 +77,12 @@ def init_recruitment_tables() -> None:
             member_role_id TEXT
         )
     """)
+    # Migration: older DBs only have the single member_role_id column — add
+    # the extra rank slots if they're missing so existing configs survive.
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(recruitment_config)")}
+    for col in MEMBER_ROLE_SLOTS[1:]:
+        if col not in existing_cols:
+            conn.execute(f"ALTER TABLE recruitment_config ADD COLUMN {col} TEXT")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS recruitment_apps (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,13 +107,19 @@ def init_recruitment_tables() -> None:
 def _get_config(guild_id: int) -> Optional[dict]:
     conn = sqlite3.connect(DB_PATH)
     row = conn.execute(
-        "SELECT channel_id, officer_role_id, member_role_id FROM recruitment_config WHERE guild_id=?",
+        f"SELECT channel_id, officer_role_id, {', '.join(MEMBER_ROLE_SLOTS)} "
+        f"FROM recruitment_config WHERE guild_id=?",
         (str(guild_id),)
     ).fetchone()
     conn.close()
     if not row:
         return None
-    return {"channel_id": row[0], "officer_role_id": row[1], "member_role_id": row[2]}
+    member_role_ids = [r for r in row[2:2 + len(MEMBER_ROLE_SLOTS)] if r]
+    return {
+        "channel_id": row[0],
+        "officer_role_id": row[1],
+        "member_role_ids": member_role_ids,
+    }
 
 
 def _save_application(guild_id: int, applicant_id: int, nickname: str, char_class: str,
@@ -175,23 +190,31 @@ def _get_pending_application_ids() -> list[int]:
     channel="Channel to post the recruitment panel in",
     officer_role="Role that can review and decide on applications",
     member_role="Optional: role automatically given to accepted applicants",
+    member_role_2="Optional: additional rank given to accepted applicants",
+    member_role_3="Optional: additional rank given to accepted applicants",
+    member_role_4="Optional: additional rank given to accepted applicants",
 )
 async def recruitment_panel(
     interaction: discord.Interaction,
     channel: discord.TextChannel,
     officer_role: discord.Role,
     member_role: Optional[discord.Role] = None,
+    member_role_2: Optional[discord.Role] = None,
+    member_role_3: Optional[discord.Role] = None,
+    member_role_4: Optional[discord.Role] = None,
 ):
+    member_roles = [r for r in (member_role, member_role_2, member_role_3, member_role_4) if r]
+
     conn = sqlite3.connect(DB_PATH)
+    columns = ("guild_id", "channel_id", "officer_role_id", *MEMBER_ROLE_SLOTS)
+    placeholders = ", ".join("?" for _ in columns)
+    update_clause = ", ".join(f"{c} = excluded.{c}" for c in columns if c != "guild_id")
+    role_ids = [str(r.id) for r in member_roles] + [None] * (len(MEMBER_ROLE_SLOTS) - len(member_roles))
     conn.execute(
-        """INSERT INTO recruitment_config (guild_id, channel_id, officer_role_id, member_role_id)
-           VALUES (?, ?, ?, ?)
-           ON CONFLICT(guild_id) DO UPDATE SET
-               channel_id = excluded.channel_id,
-               officer_role_id = excluded.officer_role_id,
-               member_role_id = excluded.member_role_id""",
-        (str(interaction.guild_id), str(channel.id), str(officer_role.id),
-         str(member_role.id) if member_role else None)
+        f"""INSERT INTO recruitment_config ({', '.join(columns)})
+           VALUES ({placeholders})
+           ON CONFLICT(guild_id) DO UPDATE SET {update_clause}""",
+        (str(interaction.guild_id), str(channel.id), str(officer_role.id), *role_ids)
     )
     conn.commit()
     conn.close()
@@ -217,10 +240,11 @@ async def recruitment_panel(
 
     view = RecruitmentPanelView()
     await channel.send(embed=embed, view=view)
-    await interaction.response.send_message(
-        f"✅ Recruitment panel posted in {channel.mention}. Officer role: {officer_role.mention}.",
-        ephemeral=True,
-    )
+
+    confirmation = f"✅ Recruitment panel posted in {channel.mention}. Officer role: {officer_role.mention}."
+    if member_roles:
+        confirmation += f" Ranks granted on acceptance: {', '.join(r.mention for r in member_roles)}."
+    await interaction.response.send_message(confirmation, ephemeral=True)
 
 
 @recruitment_panel.error
@@ -453,14 +477,15 @@ class OfficerDecisionView(discord.ui.View):
             child.disabled = True
 
         if applicant:
-            # Assign member role
-            if config and config["member_role_id"]:
-                role = interaction.guild.get_role(int(config["member_role_id"]))
-                if role:
+            # Assign configured ranks
+            if config and config["member_role_ids"]:
+                roles = [interaction.guild.get_role(int(rid)) for rid in config["member_role_ids"]]
+                roles = [r for r in roles if r]
+                if roles:
                     try:
-                        await applicant.add_roles(role, reason=f"Guild application #{self.app_id} accepted")
+                        await applicant.add_roles(*roles, reason=f"Guild application #{self.app_id} accepted")
                     except discord.Forbidden:
-                        print(f"recruitment: missing permission to add role to {applicant}")
+                        print(f"recruitment: missing permission to add role(s) to {applicant}")
 
             # Rename to in-game nickname
             try:
