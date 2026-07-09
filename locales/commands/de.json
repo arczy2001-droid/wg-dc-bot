@@ -132,7 +132,10 @@
     "options": {
       "channel": "Kanal, in dem das Rekrutierungspanel veröffentlicht wird",
       "officer_role": "Rolle, die Bewerbungen prüfen und entscheiden kann",
-      "member_role": "Optional: Rolle, die angenommenen Bewerbern automatisch vergeben wird"
+      "member_role": "Optional: Rolle, die angenommenen Bewerbern automatisch vergeben wird",
+      "member_role_2": "Optional: zusätzlicher Rang, der angenommenen Bewerbern vergeben wird",
+      "member_role_3": "Optional: zusätzlicher Rang, der angenommenen Bewerbern vergeben wird",
+      "member_role_4": "Optional: zusätzlicher Rang, der angenommenen Bewerbern vergeben wird"
     }
   },
   "attack_setup": {
