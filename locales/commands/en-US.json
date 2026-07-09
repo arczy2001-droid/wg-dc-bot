@@ -132,7 +132,10 @@
     "options": {
       "channel": "Channel to post the recruitment panel in",
       "officer_role": "Role that can review and decide on applications",
-      "member_role": "Optional: role automatically given to accepted applicants"
+      "member_role": "Optional: role automatically given to accepted applicants",
+      "member_role_2": "Optional: additional rank given to accepted applicants",
+      "member_role_3": "Optional: additional rank given to accepted applicants",
+      "member_role_4": "Optional: additional rank given to accepted applicants"
     }
   },
   "attack_setup": {
