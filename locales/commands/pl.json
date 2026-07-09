@@ -132,7 +132,10 @@
     "options": {
       "channel": "Kanał, na którym ma pojawić się panel rekrutacji",
       "officer_role": "Rola, która może rozpatrywać i decydować o podaniach",
-      "member_role": "Opcjonalnie: rola nadawana automatycznie przyjętym kandydatom"
+      "member_role": "Opcjonalnie: rola nadawana automatycznie przyjętym kandydatom",
+      "member_role_2": "Opcjonalnie: dodatkowa ranga nadawana przyjętym kandydatom",
+      "member_role_3": "Opcjonalnie: dodatkowa ranga nadawana przyjętym kandydatom",
+      "member_role_4": "Opcjonalnie: dodatkowa ranga nadawana przyjętym kandydatom"
     }
   },
   "attack_setup": {
