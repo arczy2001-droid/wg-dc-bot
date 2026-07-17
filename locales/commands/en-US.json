@@ -47,7 +47,9 @@
     "description": "List of absences",
     "options": {
       "swiat": "World name",
-      "okres": "Time window to include (default: all time)"
+      "okres": "Time window to include (default: all time, ignored if 'od' or 'do' is set)",
+      "od": "Custom range start: DD.MM or DD.MM.YYYY (e.g. 10.07)",
+      "do": "Custom range end: DD.MM or DD.MM.YYYY (e.g. 17.07)"
     }
   },
   "gt_report_delete": {

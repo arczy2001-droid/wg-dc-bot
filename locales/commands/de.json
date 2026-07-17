@@ -47,7 +47,9 @@
     "description": "Abwesenheitsliste",
     "options": {
       "swiat": "Weltname",
-      "okres": "Zeitraum, der berücksichtigt werden soll (Standard: gesamter Zeitraum)"
+      "okres": "Zeitraum, der berücksichtigt werden soll (Standard: gesamter Zeitraum, wird ignoriert, wenn 'od' oder 'do' angegeben ist)",
+      "od": "Beginn des eigenen Zeitraums: DD.MM oder DD.MM.YYYY (z. B. 10.07)",
+      "do": "Ende des eigenen Zeitraums: DD.MM oder DD.MM.YYYY (z. B. 17.07)"
     }
   },
   "gt_report_delete": {

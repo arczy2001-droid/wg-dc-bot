@@ -651,10 +651,38 @@ OKRES_CHOICES = [
 @app_commands.choices(okres=OKRES_CHOICES)
 @app_commands.describe(
     swiat="World name",
-    okres="Time window to include (default: all time)"
+    okres="Time window to include (default: all time, ignored if 'od' or 'do' is set)",
+    od="Custom range start: DD.MM or DD.MM.YYYY (e.g. 10.07)",
+    do="Custom range end: DD.MM or DD.MM.YYYY (e.g. 17.07)"
 )
-async def wg_absent_list(interaction: discord.Interaction, swiat: str, okres: Optional[app_commands.Choice[str]] = None):
+async def wg_absent_list(
+    interaction: discord.Interaction, swiat: str,
+    okres: Optional[app_commands.Choice[str]] = None,
+    od: Optional[str] = None, do: Optional[str] = None
+):
     if not await sprawdz_pozwolenie(interaction): return
+
+    # A custom "od"/"do" range takes over from the "okres" presets whenever
+    # either one is supplied, since it's more specific than a preset window.
+    if od is not None or do is not None:
+        od_iso = od_display = do_iso = do_display = None
+        if od is not None:
+            od_iso, od_display = _parse_report_date(od)
+            if od_iso is None:
+                await interaction.response.send_message(od_display, ephemeral=True)
+                return
+        if do is not None:
+            do_iso, do_display = _parse_report_date(do)
+            if do_iso is None:
+                await interaction.response.send_message(do_display, ephemeral=True)
+                return
+        if od_iso is not None and do_iso is not None and od_iso > do_iso:
+            await interaction.response.send_message(
+                f"❌ The range start (`{od_display}`) is after the range end (`{do_display}`).",
+                ephemeral=True
+            )
+            return
+
     await interaction.response.defer()
 
     conn = sqlite3.connect("gildia.db")
@@ -664,9 +692,26 @@ async def wg_absent_list(interaction: discord.Interaction, swiat: str, okres: Op
     # Build the optional date filter on data_raportu (the actual battle date,
     # not the creation timestamp) so filtering "last 7 days" means battles
     # that happened in the last 7 days, not just rows recently inserted.
-    if okres_val == "all":
+    if od is not None or do is not None:
+        conditions = []
+        date_params_list = [gid, swiat.lower()]
+        if od_iso is not None:
+            conditions.append("data_raportu >= ?")
+            date_params_list.append(od_iso)
+        if do_iso is not None:
+            conditions.append("data_raportu <= ?")
+            date_params_list.append(do_iso)
+        date_filter = "AND " + " AND ".join(conditions)
+        date_params: tuple = tuple(date_params_list)
+        if od_display and do_display:
+            okres_label = f"{od_display} - {do_display}"
+        elif od_display:
+            okres_label = f"Since {od_display}"
+        else:
+            okres_label = f"Until {do_display}"
+    elif okres_val == "all":
         date_filter = ""
-        date_params: tuple = (gid, swiat.lower())
+        date_params = (gid, swiat.lower())
         okres_label = "All time"
     else:
         days = int(okres_val.replace("d", ""))

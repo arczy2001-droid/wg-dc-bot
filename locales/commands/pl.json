@@ -47,7 +47,9 @@
     "description": "Lista nieobecności",
     "options": {
       "swiat": "Nazwa świata",
-      "okres": "Zakres czasu do uwzględnienia (domyślnie: cały czas)"
+      "okres": "Zakres czasu do uwzględnienia (domyślnie: cały czas, ignorowane jeśli podano 'od' lub 'do')",
+      "od": "Początek własnego zakresu: DD.MM lub DD.MM.RRRR (np. 10.07)",
+      "do": "Koniec własnego zakresu: DD.MM lub DD.MM.RRRR (np. 17.07)"
     }
   },
   "gt_report_delete": {
