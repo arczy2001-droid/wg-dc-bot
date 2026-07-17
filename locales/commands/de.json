@@ -47,9 +47,7 @@
     "description": "Abwesenheitsliste",
     "options": {
       "swiat": "Weltname",
-      "okres": "Zeitraum, der berücksichtigt werden soll (Standard: gesamter Zeitraum, wird ignoriert, wenn 'od' oder 'do' angegeben ist)",
-      "od": "Beginn des eigenen Zeitraums: DD.MM oder DD.MM.YYYY (z. B. 10.07)",
-      "do": "Ende des eigenen Zeitraums: DD.MM oder DD.MM.YYYY (z. B. 17.07)"
+      "okres": "Zeitraum, der berücksichtigt werden soll (Standard: gesamter Zeitraum)"
     }
   },
   "gt_report_delete": {
@@ -84,7 +82,7 @@
     "description": "Den einmaligen Server-Einrichtungsassistenten ausführen (nur Admin)."
   },
   "gt_setup_reset": {
-    "description": "Konfiguration entsperren, damit /setup erneut ausgeführt werden kann (nur Admin)."
+    "description": "Konfiguration entsperren, damit /gt_setup erneut ausgeführt werden kann (nur Admin)."
   },
   "gt_wipe": {
     "description": "Alle Abwesenheitsberichte löschen (nur dieser Server)"

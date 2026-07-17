@@ -47,9 +47,7 @@
     "description": "Lista nieobecności",
     "options": {
       "swiat": "Nazwa świata",
-      "okres": "Zakres czasu do uwzględnienia (domyślnie: cały czas, ignorowane jeśli podano 'od' lub 'do')",
-      "od": "Początek własnego zakresu: DD.MM lub DD.MM.RRRR (np. 10.07)",
-      "do": "Koniec własnego zakresu: DD.MM lub DD.MM.RRRR (np. 17.07)"
+      "okres": "Zakres czasu do uwzględnienia (domyślnie: cały czas)"
     }
   },
   "gt_report_delete": {
@@ -87,7 +85,7 @@
     "description": "Uruchom jednorazowego kreatora konfiguracji serwera (tylko admin)."
   },
   "gt_setup_reset": {
-    "description": "Odblokuj konfigurację, aby móc ponownie uruchomić /setup (tylko admin)."
+    "description": "Odblokuj konfigurację, aby móc ponownie uruchomić /gt_setup (tylko admin)."
   },
   "gt_ranking_set": {
     "description": "Skonfiguruj lub wyłącz automatyczny cotygodniowy ranking nieobecności dla jednego świata",
