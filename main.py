@@ -7,7 +7,6 @@ import re
 from datetime import datetime, timedelta
 from typing import Optional
 import asyncio
-from playwright.async_api import async_playwright
 import difflib
 import aiohttp
 from urllib.parse import urlparse
@@ -339,7 +338,7 @@ class MyBot(commands.Bot):
         conn = sqlite3.connect("gildia.db")
 
         # Only worlds with an explicit schedule row get checked here; worlds that
-        # never had /wg_set_ranking run for them simply have automatic ranking
+        # never had /gt_ranking_set run for them simply have automatic ranking
         # off by default (no surprise messages for a world that never configured this).
         due_worlds = conn.cursor().execute(
             "SELECT guild_id, swiat FROM ranking_schedule WHERE enabled=1 AND weekday=? AND hour=? AND minute=?",
@@ -392,7 +391,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     except Exception:
         pass
 
-#    Sprawdzenie głównego kanału (scoped per guild, ustawione przez /setup)
+#    Sprawdzenie głównego kanału (scoped per guild, ustawione przez /gt_setup)
 async def sprawdz_pozwolenie(interaction: discord.Interaction) -> bool:
     if not interaction.guild_id:
         await interaction.response.send_message("❌ This command can only be used inside a server.", ephemeral=True)
@@ -411,7 +410,7 @@ async def sprawdz_pozwolenie(interaction: discord.Interaction) -> bool:
     return True
 
 #    Komendy
-@bot.tree.command(name="wg_add_world", description="Add world and assign a channel")
+@bot.tree.command(name="gt_world_add", description="Add world and assign a channel")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def wg_add_world(interaction: discord.Interaction, nazwa: str, kanal: discord.TextChannel):
     if not await sprawdz_pozwolenie(interaction): return
@@ -425,7 +424,7 @@ async def wg_add_world(interaction: discord.Interaction, nazwa: str, kanal: disc
         translator.get_text(interaction.guild_id, "worlds.added", world=nazwa, channel=kanal.mention)
     )
 
-@bot.tree.command(name="wg_delete_world", description="Deleting world")
+@bot.tree.command(name="gt_world_delete", description="Deleting world")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def wg_delete_world(interaction: discord.Interaction, nazwa: str):
     if not await sprawdz_pozwolenie(interaction): return
@@ -442,7 +441,7 @@ async def wg_delete_world(interaction: discord.Interaction, nazwa: str):
         translator.get_text(interaction.guild_id, "worlds.deleted", world=nazwa)
     )
 
-@bot.tree.command(name="wg_worlds", description="List of the worlds")
+@bot.tree.command(name="gt_worlds", description="List of the worlds")
 async def wg_worlds(interaction: discord.Interaction):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
@@ -455,7 +454,7 @@ async def wg_worlds(interaction: discord.Interaction):
     header = translator.get_text(interaction.guild_id, "worlds.list_header")
     await interaction.response.send_message(f"{header}\n{txt}")
 
-@bot.tree.command(name="wg_add_member", description="Assign players to a world")
+@bot.tree.command(name="gt_member_add", description="Assign players to a world")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def wg_add_member(interaction: discord.Interaction, swiat: str, lista: str):
     if not await sprawdz_pozwolenie(interaction): return
@@ -466,7 +465,7 @@ async def wg_add_member(interaction: discord.Interaction, swiat: str, lista: str
     conn.commit(); conn.close()
     await interaction.response.send_message(translator.get_text(interaction.guild_id, "members.added"))
 
-@bot.tree.command(name="wg_delete_member", description="Deleting player")
+@bot.tree.command(name="gt_member_delete", description="Deleting player")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def wg_delete_member(interaction: discord.Interaction, swiat: str, nick: str):
     if not await sprawdz_pozwolenie(interaction): return
@@ -480,7 +479,7 @@ async def wg_delete_member(interaction: discord.Interaction, swiat: str, nick: s
         translator.get_text(interaction.guild_id, "members.deleted", nick=nick)
     )
 
-@bot.tree.command(name="wg_member_list", description="Member list:")
+@bot.tree.command(name="gt_members", description="Member list:")
 async def wg_member_list(interaction: discord.Interaction, swiat: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
@@ -559,7 +558,7 @@ def _parse_report_date(data_str: Optional[str]) -> tuple[Optional[str], Optional
     return iso, display
 
 
-@bot.tree.command(name="wg", description="Upload the activity report")
+@bot.tree.command(name="report", description="Upload the activity report")
 @app_commands.describe(
     swiat="World name",
     screen="Screenshot of the battle/activity list",
@@ -648,7 +647,7 @@ OKRES_CHOICES = [
     app_commands.Choice(name="All time",             value="all"),
 ]
 
-@bot.tree.command(name="wg_absent_list", description="List of absences")
+@bot.tree.command(name="gt_absent_list", description="List of absences")
 @app_commands.choices(okres=OKRES_CHOICES)
 @app_commands.describe(
     swiat="World name",
@@ -699,7 +698,7 @@ async def wg_absent_list(interaction: discord.Interaction, swiat: str, okres: Op
 
     await interaction.followup.send(f"{naglowek} *(⏱ {okres_label})*\n{txt}")
 
-@bot.tree.command(name="wg_delete_raport", description="Deleting last assigned report")
+@bot.tree.command(name="gt_report_delete", description="Deleting last assigned report")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
     if not await sprawdz_pozwolenie(interaction): return
@@ -725,7 +724,7 @@ async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
         await interaction.response.send_message(translator.get_text(interaction.guild_id, "reports.none_found"))
     conn.close()
 
-@bot.tree.command(name="wg_add_absent", description="Add single absence to a member")
+@bot.tree.command(name="gt_absent_add", description="Add single absence to a member")
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.describe(
     swiat="World name", nick="Player nickname",
@@ -748,7 +747,7 @@ async def wg_add_absent(interaction: discord.Interaction, swiat: str, nick: str,
         + f" (📅 `{display_or_error}`)"
     )
 
-@bot.tree.command(name="wg_delete_absent", description="Delete single absence for a member")
+@bot.tree.command(name="gt_absent_delete", description="Delete single absence for a member")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def wg_delete_absent(interaction: discord.Interaction, swiat: str, nick: str):
     if not await sprawdz_pozwolenie(interaction): return
@@ -765,7 +764,7 @@ async def wg_delete_absent(interaction: discord.Interaction, swiat: str, nick: s
         translator.get_text(interaction.guild_id, "reports.absence_deleted", nick=nick)
     )
 
-@bot.tree.command(name="wg_clear_all", description="Clearing every absensce report (this server only)")
+@bot.tree.command(name="gt_wipe", description="Clearing every absensce report (this server only)")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def wg_clear_all(interaction: discord.Interaction):
     if not await sprawdz_pozwolenie(interaction): return
@@ -776,7 +775,7 @@ async def wg_clear_all(interaction: discord.Interaction):
     conn.commit(); conn.close()
     await interaction.response.send_message(translator.get_text(interaction.guild_id, "reports.all_cleared"))
 
-@bot.tree.command(name="wg_cleanup_reports", description="Delete reports for one world — either by exact date or by age")
+@bot.tree.command(name="gt_reports_wipe", description="Delete reports for one world — either by exact date or by age")
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.describe(
     swiat="World name",
@@ -796,7 +795,7 @@ async def wg_cleanup_reports(interaction: discord.Interaction, swiat: str, data:
 
     if data is not None:
         # --- MODE 1: delete by exact battle date (data_raportu) ---
-        # Reuses the same parser /wg uses, so "15.06", "15.06.2026" etc. all work
+        # Reuses the same parser /report uses, so "15.06", "15.06.2026" etc. all work
         # the same way here as they do when submitting a report.
         data_raportu, display_or_error = _parse_report_date(data)
         if data_raportu is None:
@@ -882,7 +881,7 @@ WEEKDAY_CHOICES = [
 ]
 WEEKDAY_NAMES = {c.value: c.name for c in WEEKDAY_CHOICES}
 
-@bot.tree.command(name="wg_set_ranking", description="Configure or disable the automatic weekly absence ranking for one world")
+@bot.tree.command(name="gt_ranking_set", description="Configure or disable the automatic weekly absence ranking for one world")
 @app_commands.choices(weekday=WEEKDAY_CHOICES)
 @app_commands.describe(
     swiat="World this schedule applies to",
@@ -947,7 +946,7 @@ async def wg_set_ranking(
         conn.commit(); conn.close()
         await interaction.response.send_message(f"🔕 Automatic weekly ranking disabled for **{swiat.upper()}**.")
 
-@bot.tree.command(name="wg_ranking_status", description="Show the current automatic ranking schedule")
+@bot.tree.command(name="gt_ranking_status", description="Show the current automatic ranking schedule")
 @app_commands.describe(swiat="Show only this world's schedule (omit to list every world)")
 async def wg_ranking_status(interaction: discord.Interaction, swiat: Optional[str] = None):
     if not await sprawdz_pozwolenie(interaction): return
@@ -971,7 +970,7 @@ async def wg_ranking_status(interaction: discord.Interaction, swiat: Optional[st
         if not row or not row[3]:
             await interaction.response.send_message(
                 f"🔕 Automatic weekly ranking is currently **disabled** for **{swiat.upper()}**. "
-                "Use `/wg_set_ranking` to turn it on."
+                "Use `/gt_ranking_set` to turn it on."
             )
             return
 
@@ -990,7 +989,7 @@ async def wg_ranking_status(interaction: discord.Interaction, swiat: Optional[st
         if not active:
             await interaction.response.send_message(
                 "🔕 Automatic weekly ranking is currently **disabled** for every world on this server. "
-                "Use `/wg_set_ranking` to turn it on for a specific world."
+                "Use `/gt_ranking_set` to turn it on for a specific world."
             )
             return
 
@@ -1000,7 +999,7 @@ async def wg_ranking_status(interaction: discord.Interaction, swiat: Optional[st
         ]
         await interaction.response.send_message("📅 Automatic ranking schedule:\n" + "\n".join(lines))
 
-@bot.tree.command(name="wg_block_image", description="Manually add an image to the scam blocklist")
+@bot.tree.command(name="gt_block_image", description="Manually add an image to the scam blocklist")
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.describe(
     image="The image to block",
@@ -1030,7 +1029,7 @@ async def wg_block_image(interaction: discord.Interaction, image: discord.Attach
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-@bot.tree.command(name="wg_blocklist_stats", description="Show how many images are in the scam hash blocklist")
+@bot.tree.command(name="gt_blocklist_stats", description="Show how many images are in the scam hash blocklist")
 async def wg_blocklist_stats(interaction: discord.Interaction):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect(DB_PATH)
@@ -1044,34 +1043,6 @@ async def wg_blocklist_stats(interaction: discord.Interaction):
     for h, guild, ts, rsn in recent:
         lines.append(f"`{h[:16]}...` — {rsn} (guild {guild}, {ts[:10]})")
     await interaction.response.send_message("\n".join(lines), ephemeral=True)
-
-@bot.tree.command(name="test_scrapera", description="Test połączenia bota z SFDataHub")
-async def test_scrapera(interaction: discord.Interaction):
-    await interaction.response.defer()
-
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
-            url = "https://sfdatahub.com/#/toplists"
-            await page.goto(url)
-            await page.wait_for_timeout(4000)
-            tytul = await page.title()
-            surowy_tekst = await page.locator("body").inner_text()
-            podglad_tekstu = surowy_tekst[:600]
-
-            await browser.close()
-
-            odpowiedz = (
-                f"✅ **Połączenie nawiązane!**\n\n"
-                f"**Tytuł karty:** `{tytul}`\n"
-                f"**Co bot widzi na stronie (fragment):**\n"
-                f"```text\n{podglad_tekstu}\n```"
-            )
-            await interaction.followup.send(odpowiedz)
-
-    except Exception as e:
-        await interaction.followup.send(f"❌ **Wystąpił błąd podczas skanowania:**\n`{e}`")
 
 # ---------------------------------------------------------------------------
 # ANTI-RAID: per-guild, per-user channel tracker

@@ -1,37 +1,41 @@
 {
-  "wg_add_world": {
+  "gt_world_add": {
     "description": "Welt hinzufügen und einen Kanal zuweisen",
     "options": {
       "nazwa": "Weltname",
       "kanal": "Kanal, in dem die Berichte dieser Welt gepostet werden"
     }
   },
-  "wg_delete_world": {
+  "gt_world_delete": {
     "description": "Welt löschen",
-    "options": { "nazwa": "Zu löschende Welt" }
+    "options": {
+      "nazwa": "Zu löschende Welt"
+    }
   },
-  "wg_worlds": {
+  "gt_worlds": {
     "description": "Liste der Welten"
   },
-  "wg_add_member": {
+  "gt_member_add": {
     "description": "Spieler einer Welt zuweisen",
     "options": {
       "swiat": "Weltname",
       "lista": "Spieler-Nicknamen, getrennt durch Kommas oder Zeilenumbrüche"
     }
   },
-  "wg_delete_member": {
+  "gt_member_delete": {
     "description": "Spieler löschen",
     "options": {
       "swiat": "Weltname",
       "nick": "Zu entfernender Spieler-Nickname"
     }
   },
-  "wg_member_list": {
+  "gt_members": {
     "description": "Mitgliederliste",
-    "options": { "swiat": "Weltname" }
+    "options": {
+      "swiat": "Weltname"
+    }
   },
-  "wg": {
+  "report": {
     "description": "Aktivitätsbericht hochladen",
     "options": {
       "swiat": "Weltname",
@@ -39,18 +43,20 @@
       "data": "Berichtsdatum: TT.MM oder TT.MM.JJJJ (Standard: heute, falls weggelassen)"
     }
   },
-  "wg_absent_list": {
+  "gt_absent_list": {
     "description": "Abwesenheitsliste",
     "options": {
       "swiat": "Weltname",
       "okres": "Zeitraum, der berücksichtigt werden soll (Standard: gesamter Zeitraum)"
     }
   },
-  "wg_delete_raport": {
+  "gt_report_delete": {
     "description": "Letzten zugewiesenen Bericht löschen",
-    "options": { "swiat": "Weltname" }
+    "options": {
+      "swiat": "Weltname"
+    }
   },
-  "wg_add_absent": {
+  "gt_absent_add": {
     "description": "Eine Abwesenheit für ein Mitglied hinzufügen",
     "options": {
       "swiat": "Weltname",
@@ -58,33 +64,30 @@
       "data": "Berichtsdatum: TT.MM oder TT.MM.JJJJ (Standard: heute)"
     }
   },
-  "wg_cleanup_reports": {
+  "gt_reports_wipe": {
     "description": "Berichte für eine Welt löschen — entweder nach genauem Datum oder nach Alter",
     "options": {
       "swiat": "Weltname",
       "data": "Genaues Kampfdatum (TT.MM[.JJJJ]). Ohne Angabe werden Berichte älter als 3 Tage gelöscht."
     }
   },
-  "wg_delete_absent": {
+  "gt_absent_delete": {
     "description": "Eine Abwesenheit für ein Mitglied löschen",
     "options": {
       "swiat": "Weltname",
       "nick": "Spieler-Nickname"
     }
   },
-  "setup": {
+  "gt_setup": {
     "description": "Den einmaligen Server-Einrichtungsassistenten ausführen (nur Admin)."
   },
-  "setup_reset": {
+  "gt_setup_reset": {
     "description": "Konfiguration entsperren, damit /setup erneut ausgeführt werden kann (nur Admin)."
   },
-  "wg_clear_all": {
+  "gt_wipe": {
     "description": "Alle Abwesenheitsberichte löschen (nur dieser Server)"
   },
-  "test_scrapera": {
-    "description": "Testet die Verbindung des Bots zu SFDataHub"
-  },
-  "wg_set_ranking": {
+  "gt_ranking_set": {
     "description": "Automatisches wöchentliches Abwesenheits-Ranking für eine Welt konfigurieren oder deaktivieren",
     "options": {
       "swiat": "Welt, für die dieser Zeitplan gilt",
@@ -94,40 +97,44 @@
       "minute": "Minute (nur relevant, wenn aktiviert)"
     }
   },
-  "wg_ranking_status": {
+  "gt_ranking_status": {
     "description": "Den aktuellen automatischen Ranking-Zeitplan anzeigen",
     "options": {
       "swiat": "Nur den Zeitplan dieser Welt anzeigen (weglassen für alle)"
     }
   },
-  "settings": {
+  "gt_setup_settings": {
     "description": "Eine einzelne Servereinstellung ändern, ohne alles zurückzusetzen (nur Admin)."
   },
-  "wg_block_image": {
+  "gt_block_image": {
     "description": "Ein Bild manuell zur Scam-Blockliste hinzufügen",
     "options": {
       "image": "Das zu blockierende Bild",
       "reason": "Grund für die Blockierung (optional)"
     }
   },
-  "wg_blocklist_stats": {
+  "gt_blocklist_stats": {
     "description": "Anzahl der Bilder in der Scam-Hash-Blockliste anzeigen"
   },
-  "sf_events_setup": {
+  "gt_events_setup": {
     "description": "Den Kanal festlegen, in dem offizielle Spiel-Event-Webhooks ankommen (nur Admin).",
-    "options": { "channel": "Der Kanal, der offizielle Spiel-News/Event-Webhooks empfängt" }
+    "options": {
+      "channel": "Der Kanal, der offizielle Spiel-News/Event-Webhooks empfängt"
+    }
   },
-  "sf_events_toggle": {
+  "gt_events_toggle": {
     "description": "Das SF-Event-Tracking-Modul aktivieren oder deaktivieren (nur Admin).",
-    "options": { "state": "True zum Aktivieren, False zum Deaktivieren" }
+    "options": {
+      "state": "True zum Aktivieren, False zum Deaktivieren"
+    }
   },
-  "sf_events_reload": {
+  "gt_events_reload": {
     "description": "Den Event-Kanal-Verlauf erneut scannen und den Zeitplan aktualisieren (nur Admin)."
   },
   "events": {
     "description": "Aktuelle und bevorstehende In-Game-Events für dieses Wochenende anzeigen."
   },
-  "recruitment_panel": {
+  "gt_recruitment_panel": {
     "description": "Das Gilden-Rekrutierungs-Bewerbungspanel veröffentlichen (nur Admin).",
     "options": {
       "channel": "Kanal, in dem das Rekrutierungspanel veröffentlicht wird",
@@ -138,7 +145,7 @@
       "member_role_4": "Optional: zusätzlicher Rang, der angenommenen Bewerbern vergeben wird"
     }
   },
-  "attack_setup": {
+  "gt_attack_setup": {
     "description": "Alarmkanal und Ping-Rolle für Angriffsbenachrichtigungen einer Welt konfigurieren.",
     "options": {
       "world_name": "Weltname (z.B. eu20)",

@@ -444,7 +444,7 @@ async def handle_event_webhook(message: discord.Message) -> bool:
 # ---------------------------------------------------------------------------
 
 @app_commands.command(
-    name="sf_events_setup",
+    name="gt_events_setup",
     description="Set the channel where official game event webhooks arrive (admin only)."
 )
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -552,7 +552,7 @@ async def sf_events_setup_error(interaction: discord.Interaction, error: app_com
 
 
 @app_commands.command(
-    name="sf_events_toggle",
+    name="gt_events_toggle",
     description="Enable or disable the SF events tracking module (admin only)."
 )
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -566,7 +566,7 @@ async def sf_events_toggle(interaction: discord.Interaction, state: bool):
     if not existing:
         conn.close()
         await interaction.response.send_message(
-            "❌ Module not configured yet. Run `/sf_events_setup` first.",
+            "❌ Module not configured yet. Run `/gt_events_setup` first.",
             ephemeral=True,
         )
         return
@@ -596,7 +596,7 @@ async def sf_events_toggle_error(interaction: discord.Interaction, error: app_co
 
 
 @app_commands.command(
-    name="sf_events_reload",
+    name="gt_events_reload",
     description="Re-scan the events channel history and reload the event schedule (admin only)."
 )
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -604,7 +604,7 @@ async def sf_events_reload(interaction: discord.Interaction):
     config = _get_config(interaction.guild_id)
     if not config:
         await interaction.response.send_message(
-            "❌ Module not configured yet. Run `/sf_events_setup` first.", ephemeral=True
+            "❌ Module not configured yet. Run `/gt_events_setup` first.", ephemeral=True
         )
         return
 
@@ -794,7 +794,7 @@ async def events(interaction: discord.Interaction):
     if not config or not config[1]:
         await interaction.response.send_message(
             "❌ The events module is not set up or is disabled on this server. "
-            "Ask an admin to run `/sf_events_setup`.",
+            "Ask an admin to run `/gt_events_setup`.",
             ephemeral=True,
         )
         return

@@ -184,7 +184,7 @@ def _get_pending_application_ids() -> list[int]:
 # ADMIN SETUP COMMAND
 # ---------------------------------------------------------------------------
 
-@app_commands.command(name="recruitment_panel", description="Post the guild recruitment application panel (admin only).")
+@app_commands.command(name="gt_recruitment_panel", description="Post the guild recruitment application panel (admin only).")
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.describe(
     channel="Channel to post the recruitment panel in",

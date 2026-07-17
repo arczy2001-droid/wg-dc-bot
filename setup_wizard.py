@@ -1,7 +1,7 @@
 """
 setup_wizard.py
 ================
-One-time, interactive `/setup` slash command for guild configuration.
+One-time, interactive `/gt_setup` slash command for guild configuration.
 
 INTEGRATION (in your main bot file):
     from setup_wizard import (
@@ -14,14 +14,14 @@ INTEGRATION (in your main bot file):
     class MyBot(commands.Bot):
         async def setup_hook(self):
             init_setup_table()                          # creates guild_config table if missing
-            self.tree.add_command(setup_command)          # registers /setup
-            self.tree.add_command(setup_reset_command)    # registers /setup_reset
-            self.tree.add_command(settings_command)       # registers /settings
+            self.tree.add_command(setup_command)          # registers /gt_setup
+            self.tree.add_command(setup_reset_command)    # registers /gt_setup_reset
+            self.tree.add_command(settings_command)       # registers /gt_setup_settings
             ...
 
 NOTE: this introduces a NEW table (`guild_config`) separate from your existing
-`ustawienia` key-value table. If you want `/setup`'s main/logs channel to fully
-replace `/wg_root` and `/wg_set_logs`, update `sprawdz_pozwolenie()` and
+`ustawienia` key-value table. If you want `/gt_setup`'s main/logs channel to fully
+replace the old channel-config commands, update `sprawdz_pozwolenie()` and
 `wyslij_log()` in your main file to read from `guild_config` instead of
 `ustawienia` once you're ready to cut over.
 """
@@ -183,7 +183,7 @@ class WizardBaseView(discord.ui.View):
         if self.message:
             try:
                 await self.message.edit(
-                    content="⌛ Setup wizard timed out after 5 minutes of inactivity. Run `/setup` again to restart.",
+                    content="⌛ Setup wizard timed out after 5 minutes of inactivity. Run `/gt_setup` again to restart.",
                     view=self,
                 )
             except discord.HTTPException:
@@ -420,7 +420,7 @@ async def _finish_setup(interaction: discord.Interaction, state: WizardState) ->
         f"• Language: `{state.language}`\n"
         f"• Bot-admin role: <@&{state.admin_role}>\n"
         f"• Enabled modules: {', '.join(state.modules) if state.modules else '*none*'}\n\n"
-        "This configuration is now **locked** — running `/setup` again will be refused."
+        "This configuration is now **locked** — running `/gt_setup` again will be refused."
     )
 
     dm_sent = False
@@ -450,7 +450,7 @@ async def _finish_setup(interaction: discord.Interaction, state: WizardState) ->
 # THE COMMAND
 # ---------------------------------------------------------------------------
 
-@app_commands.command(name="setup", description="Run the one-time server configuration wizard (admin only).")
+@app_commands.command(name="gt_setup", description="Run the one-time server configuration wizard (admin only).")
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.guild_only()
 async def setup(interaction: discord.Interaction):
@@ -481,7 +481,7 @@ async def setup_error(interaction: discord.Interaction, error: app_commands.AppC
     elif isinstance(error, app_commands.NoPrivateMessage):
         msg = "❌ This command can only be used inside a server."
     else:
-        print(f"Unhandled error in /setup: {error}")
+        print(f"Unhandled error in /gt_setup: {error}")
         msg = "❌ Something went wrong starting setup."
 
     if interaction.response.is_done():
@@ -494,7 +494,7 @@ async def setup_error(interaction: discord.Interaction, error: app_commands.AppC
 # RESET — without this, a locked server has no way back in
 # ---------------------------------------------------------------------------
 
-@app_commands.command(name="setup_reset", description="Unlock configuration so /setup can be run again (admin only).")
+@app_commands.command(name="gt_setup_reset", description="Unlock configuration so /gt_setup can be run again (admin only).")
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.guild_only()
 async def setup_reset(interaction: discord.Interaction):
@@ -504,7 +504,7 @@ async def setup_reset(interaction: discord.Interaction):
     conn.commit()
     conn.close()
     await interaction.response.send_message(
-        "🔓 Configuration reset. Run `/setup` again to reconfigure this server from scratch.",
+        "🔓 Configuration reset. Run `/gt_setup` again to reconfigure this server from scratch.",
         ephemeral=True,
     )
 
@@ -514,7 +514,7 @@ async def setup_reset_error(interaction: discord.Interaction, error: app_command
     if isinstance(error, app_commands.MissingPermissions):
         msg = "❌ You need the **Administrator** permission to reset setup."
     else:
-        print(f"Unhandled error in /setup_reset: {error}")
+        print(f"Unhandled error in /gt_setup_reset: {error}")
         msg = "❌ Something went wrong resetting setup."
     if interaction.response.is_done():
         await interaction.followup.send(msg, ephemeral=True)
@@ -523,8 +523,8 @@ async def setup_reset_error(interaction: discord.Interaction, error: app_command
 
 
 # ---------------------------------------------------------------------------
-# /settings — edit ONE field at a time, without resetting everything else.
-# Unlike /setup, this is NOT a one-time/locked command — it can be run
+# /gt_setup_settings — edit ONE field at a time, without resetting everything else.
+# Unlike /gt_setup, this is NOT a one-time/locked command — it can be run
 # repeatedly. It updates a single column in guild_config directly via SQL
 # rather than touching the rest of the row.
 # ---------------------------------------------------------------------------
@@ -541,7 +541,7 @@ def update_guild_config_field(guild_id: int, column: str, value) -> None:
 
 
 class SettingsFieldPicker(discord.ui.View):
-    """First screen of /settings: choose WHICH field to edit."""
+    """First screen of /gt_setup_settings: choose WHICH field to edit."""
 
     def __init__(self, author_id: int, timeout: float = 120):
         super().__init__(timeout=timeout)
@@ -675,7 +675,7 @@ class _SingleSelectEditor(discord.ui.View):
 
 
 class _ModulesEditor(discord.ui.View):
-    """Same explicit-Continue-button pattern as Step6_Modules in /setup —
+    """Same explicit-Continue-button pattern as Step6_Modules in /gt_setup —
     so an admin can genuinely disable every module, not just pick from a list."""
 
     def __init__(self, author_id: int, guild_id: int, timeout: float = 120):
@@ -734,13 +734,13 @@ class _ModulesEditor(discord.ui.View):
         await interaction.response.edit_message(content=f"✅ Modules updated: {chosen}", view=None)
 
 
-@app_commands.command(name="settings", description="Change a single server setting without resetting everything (admin only).")
+@app_commands.command(name="gt_setup_settings", description="Change a single server setting without resetting everything (admin only).")
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.guild_only()
 async def settings(interaction: discord.Interaction):
     if not is_guild_configured(interaction.guild_id):
         await interaction.response.send_message(
-            "❌ This server hasn't been configured yet. Run `/setup` first.", ephemeral=True
+            "❌ This server hasn't been configured yet. Run `/gt_setup` first.", ephemeral=True
         )
         return
 
@@ -753,7 +753,7 @@ async def settings_error(interaction: discord.Interaction, error: app_commands.A
     if isinstance(error, app_commands.MissingPermissions):
         msg = "❌ You need the **Administrator** permission to change settings."
     else:
-        print(f"Unhandled error in /settings: {error}")
+        print(f"Unhandled error in /gt_setup_settings: {error}")
         msg = "❌ Something went wrong opening settings."
     if interaction.response.is_done():
         await interaction.followup.send(msg, ephemeral=True)

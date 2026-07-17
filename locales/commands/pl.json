@@ -1,37 +1,41 @@
 {
-  "wg_add_world": {
+  "gt_world_add": {
     "description": "Dodaj świat i przypisz kanał",
     "options": {
       "nazwa": "Nazwa świata",
       "kanal": "Kanał, na który będą wysyłane raporty tego świata"
     }
   },
-  "wg_delete_world": {
+  "gt_world_delete": {
     "description": "Usuwanie świata",
-    "options": { "nazwa": "Nazwa świata do usunięcia" }
+    "options": {
+      "nazwa": "Nazwa świata do usunięcia"
+    }
   },
-  "wg_worlds": {
+  "gt_worlds": {
     "description": "Lista światów"
   },
-  "wg_add_member": {
+  "gt_member_add": {
     "description": "Przypisz graczy do świata",
     "options": {
       "swiat": "Nazwa świata",
       "lista": "Nicki graczy, oddzielone przecinkami lub nowymi liniami"
     }
   },
-  "wg_delete_member": {
+  "gt_member_delete": {
     "description": "Usuwanie gracza",
     "options": {
       "swiat": "Nazwa świata",
       "nick": "Nick gracza do usunięcia"
     }
   },
-  "wg_member_list": {
+  "gt_members": {
     "description": "Lista członków",
-    "options": { "swiat": "Nazwa świata" }
+    "options": {
+      "swiat": "Nazwa świata"
+    }
   },
-  "wg": {
+  "report": {
     "description": "Prześlij raport aktywności",
     "options": {
       "swiat": "Nazwa świata",
@@ -39,18 +43,20 @@
       "data": "Data raportu: DD.MM lub DD.MM.RRRR (domyślnie dzisiaj, jeśli pominięto)"
     }
   },
-  "wg_absent_list": {
+  "gt_absent_list": {
     "description": "Lista nieobecności",
     "options": {
       "swiat": "Nazwa świata",
       "okres": "Zakres czasu do uwzględnienia (domyślnie: cały czas)"
     }
   },
-  "wg_delete_raport": {
+  "gt_report_delete": {
     "description": "Usuwanie ostatniego przypisanego raportu",
-    "options": { "swiat": "Nazwa świata" }
+    "options": {
+      "swiat": "Nazwa świata"
+    }
   },
-  "wg_add_absent": {
+  "gt_absent_add": {
     "description": "Dodaj pojedynczą nieobecność dla gracza",
     "options": {
       "swiat": "Nazwa świata",
@@ -58,33 +64,30 @@
       "data": "Data raportu: DD.MM lub DD.MM.RRRR (domyślnie dzisiaj)"
     }
   },
-  "wg_cleanup_reports": {
+  "gt_reports_wipe": {
     "description": "Usuń raporty dla jednego świata — według konkretnej daty lub wieku",
     "options": {
       "swiat": "Nazwa świata",
       "data": "Konkretna data bitwy do usunięcia (DD.MM[.RRRR]). Bez podania usuwa raporty starsze niż 3 dni."
     }
   },
-  "wg_delete_absent": {
+  "gt_absent_delete": {
     "description": "Usuń pojedynczą nieobecność dla gracza",
     "options": {
       "swiat": "Nazwa świata",
       "nick": "Nick gracza"
     }
   },
-  "wg_clear_all": {
+  "gt_wipe": {
     "description": "Czyszczenie wszystkich raportów nieobecności (tylko ten serwer)"
   },
-  "test_scrapera": {
-    "description": "Testuje połączenie bota z SFDataHub"
-  },
-  "setup": {
+  "gt_setup": {
     "description": "Uruchom jednorazowego kreatora konfiguracji serwera (tylko admin)."
   },
-  "setup_reset": {
+  "gt_setup_reset": {
     "description": "Odblokuj konfigurację, aby móc ponownie uruchomić /setup (tylko admin)."
   },
-  "wg_set_ranking": {
+  "gt_ranking_set": {
     "description": "Skonfiguruj lub wyłącz automatyczny cotygodniowy ranking nieobecności dla jednego świata",
     "options": {
       "swiat": "Świat, którego dotyczy ten harmonogram",
@@ -94,40 +97,44 @@
       "minute": "Minuta (tylko gdy włączony)"
     }
   },
-  "wg_ranking_status": {
+  "gt_ranking_status": {
     "description": "Pokaż aktualny harmonogram automatycznego rankingu",
     "options": {
       "swiat": "Pokaż harmonogram tylko dla tego świata (pomiń, aby zobaczyć wszystkie)"
     }
   },
-  "settings": {
+  "gt_setup_settings": {
     "description": "Zmień jedno ustawienie serwera bez resetowania wszystkiego (tylko admin)."
   },
-  "wg_block_image": {
+  "gt_block_image": {
     "description": "Ręcznie dodaj obraz do listy blokowanych scamów",
     "options": {
       "image": "Obraz do zablokowania",
       "reason": "Powód blokowania (opcjonalnie)"
     }
   },
-  "wg_blocklist_stats": {
+  "gt_blocklist_stats": {
     "description": "Pokaż liczbę obrazów na liście blokowanych scamów"
   },
-  "sf_events_setup": {
+  "gt_events_setup": {
     "description": "Ustaw kanał, na którym pojawiają się webhooki z oficjalnymi wydarzeniami (tylko admin).",
-    "options": { "channel": "Kanał, który odbiera oficjalne wiadomości/webhooki z wydarzeniami" }
+    "options": {
+      "channel": "Kanał, który odbiera oficjalne wiadomości/webhooki z wydarzeniami"
+    }
   },
-  "sf_events_toggle": {
+  "gt_events_toggle": {
     "description": "Włącz lub wyłącz moduł śledzenia wydarzeń SF (tylko admin).",
-    "options": { "state": "True aby włączyć, False aby wyłączyć" }
+    "options": {
+      "state": "True aby włączyć, False aby wyłączyć"
+    }
   },
-  "sf_events_reload": {
+  "gt_events_reload": {
     "description": "Przeskanuj historię kanału wydarzeń i odśwież harmonogram (tylko admin)."
   },
   "events": {
     "description": "Pokaż aktualne i nadchodzące wydarzenia w grze na ten weekend."
   },
-  "recruitment_panel": {
+  "gt_recruitment_panel": {
     "description": "Opublikuj panel rekrutacji do gildii (tylko admin).",
     "options": {
       "channel": "Kanał, na którym ma pojawić się panel rekrutacji",
@@ -138,7 +145,7 @@
       "member_role_4": "Opcjonalnie: dodatkowa ranga nadawana przyjętym kandydatom"
     }
   },
-  "attack_setup": {
+  "gt_attack_setup": {
     "description": "Skonfiguruj kanał alertów i rolę do oznaczenia dla powiadomień o ataku na dany świat.",
     "options": {
       "world_name": "Nazwa świata (np. eu20)",
