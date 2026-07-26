@@ -23,9 +23,9 @@ async def main():
     # -------------------------------------------------------------------
     # DANE LOGOWANIA (Podmień na własne dane testowe lub użyj pliku .env)
     # -------------------------------------------------------------------
-    USERNAME = os.getenv("SF_USERNAME", "TwojaNazwaKonta")
-    PASSWORD = os.getenv("SF_PASSWORD", "TwojeHaslo")
-    SERVER = os.getenv("SF_SERVER", "s1.sfgame.pl") # np. w1.sfgame.net, s1.sfgame.pl itp.
+    USERNAME = os.getenv("SF_USERNAME", "ArczY")
+    PASSWORD = os.getenv("SF_PASSWORD", "Artur2001")
+    SERVER = os.getenv("SF_SERVER", "s20.sfgame.eu") # np. w1.sfgame.net, s1.sfgame.pl itp.
     
     logger.info("=== START TESTU POŁĄCZENIA S&F API ===")
     logger.info(f"Próba logowania na serwer: {SERVER} jako użytkownik: {USERNAME}")
