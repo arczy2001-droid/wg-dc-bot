@@ -92,7 +92,10 @@ async fn try_sso_login(username: &str, password: &str, target_server: &str) {
         // this shows guild info for EVERY character found. If you know
         // which one is s20, just read the matching line below.
         match &gs.guild {
-            Some(guild) => println!("   → {}: guild {}", gs.character.name, guild.name),
+            Some(guild) => {
+                println!("   → {}: guild {}", gs.character.name, guild.name);
+                print_attack_defense_status(guild);
+            }
             None => println!("   → {}: not in a guild", gs.character.name),
         }
         found_target = true;
@@ -112,8 +115,54 @@ fn print_guild_result(username: &str, game_state: Option<&sf_api::gamestate::Gam
     };
 
     match &game_state.guild {
-        Some(guild) => println!("\n✅ Success! Logged into account {username}, guild: {}", guild.name),
+        Some(guild) => {
+            println!("\n✅ Success! Logged into account {username}, guild: {}", guild.name);
+            print_attack_defense_status(guild);
+        }
         None => println!("\n✅ Success! Logged into account {username}, guild: (not in a guild)"),
+    }
+}
+
+// ----------------------------------------------------------------------
+// Guild-level attack/defense status — read-only, confirmed field types:
+//   Guild.attacking / Guild.defending : Option<PlanedBattle { other: u32, date: DateTime<Local> }>
+//   Guild.next_attack_possible        : Option<DateTime<Local>>   (cooldown)
+//   Guild.fightable_guilds            : Vec<FightableGuild { id: u32, name: String, .. }>
+// `other` on a PlanedBattle is an opponent GUILD ID, not a name — we
+// resolve it to a name by matching against fightable_guilds where possible;
+// if the opponent isn't in that list, we fall back to showing the raw ID.
+// ----------------------------------------------------------------------
+fn print_attack_defense_status(guild: &sf_api::gamestate::guild::Guild) {
+    let resolve_name = |id: u32| -> String {
+        guild
+            .fightable_guilds
+            .iter()
+            .find(|g| g.id == id)
+            .map(|g| g.name.clone())
+            .unwrap_or_else(|| format!("(unknown guild, id {id})"))
+    };
+
+    match &guild.attacking {
+        Some(battle) => println!(
+            "⚔️  Currently ATTACKING: {} — scheduled {}",
+            resolve_name(battle.other),
+            battle.date
+        ),
+        None => println!("⚔️  Not currently attacking anyone."),
+    }
+
+    match &guild.defending {
+        Some(battle) => println!(
+            "🛡️  Currently being ATTACKED by: {} — scheduled {}",
+            resolve_name(battle.other),
+            battle.date
+        ),
+        None => println!("🛡️  Not currently under attack."),
+    }
+
+    match &guild.next_attack_possible {
+        Some(when) => println!("⏱️  Next attack possible at: {when}"),
+        None => println!("⏱️  No attack cooldown active."),
     }
 }
 
