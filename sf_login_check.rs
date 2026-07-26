@@ -87,20 +87,21 @@ async fn main() {
     // ------------------------------------------------------------------
     // ------------------------------------------------------------------
     // TEMPORARY DEBUG STEP — discovering the real guild field.
-    // The previous guess (character.guild) was confirmed WRONG by the
-    // compiler: Character has no `guild` field, so guild info likely lives
-    // directly on GameState instead (as a sibling of `character`).
+    // The previous guess (character.guild) was confirmed WRONG: Character
+    // has no `guild` field, so it likely lives directly on GameState.
     //
-    // This next line is DELIBERATELY WRONG on purpose: assigning a struct
-    // to `()` cannot compile, and rustc's error message will list every
-    // real field on GameState the same way it just listed Character's 27
-    // fields for us. This works regardless of whether GameState implements
-    // Debug, so it's more reliable than a println!("{:#?}", ...) attempt.
+    // This next line deliberately accesses a field name that doesn't
+    // exist (`__find_guild_field__`). This triggers rustc error E0609
+    // ("no field on type"), which — same as it did for Character earlier —
+    // prints the real list of available fields on GameState as a helpful
+    // hint. A plain type-mismatch trick doesn't get that same field list,
+    // which is why the previous attempt only showed "expected (), found
+    // &GameState" with no field names.
     //
     // Run `cargo build`, read the field list in the error, find the one
     // that looks like guild data, then delete this block and use it below.
     // ------------------------------------------------------------------
-    let _: () = game_state;
+    let _ = &game_state.__find_guild_field__;
 
     let character = &game_state.character;
     println!("\n✅ Login succeeded for {username} (character: {}).", character.name);
