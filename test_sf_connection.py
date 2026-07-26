@@ -1,86 +1,84 @@
 import asyncio
 import logging
+import aiohttp
 import os
-from dotenv import load_dotenv
-
-# Wczytanie zmiennych środowiskowych z pliku .env (opcjonalnie)
-load_dotenv()
 
 # Konfiguracja czytelnych logów w konsoli
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.INFO, 
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S"
 )
 logger = logging.getLogger("SF_Test")
 
 async def main():
-    """
-    Skrypt testowy do weryfikacji logowania oraz odczytu nazwy gildii i statusu walk.
-    Używa biblioteki sf-api (https://github.com/the-marenga/sf-api)
-    """
+    # ---------------------------------------------------------
+    # KONFIGURACJA TESTU
+    # ---------------------------------------------------------
+    # 1. Podaj swój aktualny serwer gry (np. w1.sfgame.net, w54.sfgame.net)
+    SERVER = "w1.sfgame.net" 
     
-    # -------------------------------------------------------------------
-    # DANE LOGOWANIA (Podmień na własne dane testowe lub użyj pliku .env)
-    # -------------------------------------------------------------------
-    USERNAME = os.getenv("SF_USERNAME", "ArczY")
-    PASSWORD = os.getenv("SF_PASSWORD", "Artur2001")
-    SERVER = os.getenv("SF_SERVER", "s20.sfgame.eu") # np. w1.sfgame.net, s1.sfgame.pl itp.
+    # 2. Skopiuj swoje "żądanie" z przeglądarki (tzw. Payload)
+    # INSTRUKCJA:
+    # a) Zaloguj się do gry w przeglądarce i wciśnij F12.
+    # b) Przejdź do zakładki "Sieć" (Network) i kliknij przycisk "Gildia" w grze.
+    # c) Na liście w F12 pojawi się plik "req.php". Kliknij w niego.
+    # d) Wejdź w zakładkę "Payload" (Żądanie) -> wybierz "View source" (pokaż źródło).
+    # e) Skopiuj cały ciąg zaczynający się od "req=..." i wklej go poniżej między cudzysłowy.
     
-    logger.info("=== START TESTU POŁĄCZENIA S&F API ===")
-    logger.info(f"Próba logowania na serwer: {SERVER} jako użytkownik: {USERNAME}")
+    PAYLOAD_Z_GRA = "" 
 
+    url = f"https://{SERVER}/req.php"
+    
+    logger.info("=== START TESTU POŁĄCZENIA Z S&F ===")
+    logger.info(f"🌍 Serwer docelowy: {url}")
+    
     try:
-        # Importujemy klienta z biblioteki sf-api
-        # UWAGA: Przed uruchomieniem zainstaluj bibliotekę: pip install git+https://github.com/the-marenga/sf-api.git
-        from sf_api import Client
-        
-        # 1. Inicjalizacja klienta gry dla konkretnego świata
-        async with Client(server=SERVER) as client:
+        # Inicjalizacja sesji HTTP
+        async with aiohttp.ClientSession() as session:
             
-            # 2. Logowanie do gry
-            login_success = await client.login(username=USERNAME, password=PASSWORD)
+            if not PAYLOAD_Z_GRA:
+                # Jeśli nie wklejono danych z F12, wykonujemy tylko próbny "ping"
+                logger.warning("⚠️ Zmienna PAYLOAD_Z_GRA jest pusta!")
+                logger.info("Wykonuję testowy 'ping' do serwera, aby sprawdzić łączność...")
+                
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        logger.info("✅ Serwer odpowiedział poprawnie (HTTP 200).")
+                        logger.info("👉 Aby zobaczyć dane gildii, uzupełnij PAYLOAD_Z_GRA w kodzie i odpal ponownie.")
+                    else:
+                        logger.error(f"❌ Serwer odrzuca połączenie. Status HTTP: {response.status}")
             
-            if not login_success:
-                logger.error("❌ Błąd logowania! Sprawdź login, hasło oraz adres serwera.")
-                return
-
-            logger.info("✅ Pomyślnie zalogowano do serwera S&F!")
-
-            # 3. Pobranie danych gracza i jego gildii
-            # Odczytujemy stan zalogowanej postaci
-            player_data = await client.get_player()
-            guild_data = getattr(player_data, "guild", None)
-
-            if not guild_data:
-                logger.warning("⚠️ Postać zalogowała się poprawnie, ale nie należy do żadnej gildii!")
-                return
-
-            # 4. Wyświetlenie wyników w konsoli
-            guild_name = getattr(guild_data, "name", "Brak nazwy")
-            guild_members_count = len(getattr(guild_data, "members", []))
-            
-            # Pobieramy informacje o ewentualnych atakach/obronach
-            has_attack = getattr(guild_data, "has_attack", False)
-            has_defense = getattr(guild_data, "has_defense", False)
-
-            logger.info("--------------------------------------------------")
-            logger.info(f"🏰 Nazwa Gildii:   [{guild_name}]")
-            logger.info(f"👥 Liczba członków: {guild_members_count}")
-            logger.info(f"⚔️ Wyznaczony atak:  {'TAK' if has_attack else 'NIE'}")
-            logger.info(f"🛡️ Zaplanowana obrona: {'TAK' if has_defense else 'NIE'}")
-            logger.info("--------------------------------------------------")
-            logger.info("🎉 Test połączenia zakończony sukcesem! API działa prawidłowo.")
-
-    except ImportError:
-        logger.error(
-            "❌ Brak zainstalowanej biblioteki sf-api!\n"
-            "Zainstaluj ją komendą:\n"
-            "pip install git+https://github.com/the-marenga/sf-api.git"
-        )
+            else:
+                # Wysyłamy żądanie udając standardową przeglądarkę internetową
+                headers = {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+                }
+                
+                logger.info("📤 Wysyłanie zaszyfrowanego żądania o stan gildii...")
+                
+                async with session.post(url, data=PAYLOAD_Z_GRA, headers=headers) as response:
+                    if response.status == 200:
+                        data = await response.text()
+                        logger.info("✅ Otrzymano odpowiedź od serwera!")
+                        logger.info("-" * 60)
+                        
+                        # Zwracany tekst z S&F to zazwyczaj długi ciąg oddzielony znakami / lub ;
+                        # Wyświetlamy pierwsze 500 znaków, aby zweryfikować czy widać w nim informacje
+                        fragment = data[:500] if len(data) > 500 else data
+                        logger.info(f"📄 ODCZYTANE DANE:\n{fragment}")
+                        logger.info("-" * 60)
+                        
+                        if "Error" in data or data.startswith("false"):
+                            logger.warning("⚠️ Serwer zwrócił błąd. Sesja mogła wygasnąć - skopiuj nowy payload z F12.")
+                        else:
+                            logger.info("🎉 Sukces! Pomyślnie zescrapowano dane z serwera metodą read-only.")
+                    else:
+                        logger.error(f"❌ Błąd HTTP {response.status} podczas pobierania danych.")
+                        
     except Exception as e:
-        logger.error(f"❌ Wystąpił nieoczekiwany błąd podczas połączenia: {e}")
+        logger.error(f"❌ Wystąpił błąd krytyczny połączenia: {e}")
 
 if __name__ == "__main__":
-    # Uruchomienie pętli asynchronicznej
     asyncio.run(main())
