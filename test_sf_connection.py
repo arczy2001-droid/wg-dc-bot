@@ -28,7 +28,7 @@ async def main():
     
     PAYLOAD_Z_GRA = "" 
 
-    url = f"https://{SERVER}/req.php"
+    url = f"https://{SERVER}/cmd.php"
     
     logger.info("=== START TESTU POŁĄCZENIA Z S&F ===")
     logger.info(f"🌍 Serwer docelowy: {url}")
