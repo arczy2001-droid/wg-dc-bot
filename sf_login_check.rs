@@ -25,7 +25,7 @@ async fn main() {
     // ------------------------------------------------------------------
     // STEP 1: Collect login details from the user
     // ------------------------------------------------------------------
-    let server = prompt("Server (e.g. w1.sfgame.pl): ");
+    let server = prompt("Server (e.g. s20.sfgame.eu): ");
     let username = prompt("Username: ");
     let password = prompt_password("Password: ");
 
@@ -85,19 +85,25 @@ async fn main() {
     //
     // Once you know the real path, replace the line below accordingly.
     // ------------------------------------------------------------------
-    let character = &game_state.character;
+    // ------------------------------------------------------------------
+    // TEMPORARY DEBUG STEP — discovering the real guild field.
+    // The previous guess (character.guild) was confirmed WRONG by the
+    // compiler: Character has no `guild` field, so guild info likely lives
+    // directly on GameState instead (as a sibling of `character`).
+    //
+    // This next line is DELIBERATELY WRONG on purpose: assigning a struct
+    // to `()` cannot compile, and rustc's error message will list every
+    // real field on GameState the same way it just listed Character's 27
+    // fields for us. This works regardless of whether GameState implements
+    // Debug, so it's more reliable than a println!("{:#?}", ...) attempt.
+    //
+    // Run `cargo build`, read the field list in the error, find the one
+    // that looks like guild data, then delete this block and use it below.
+    // ------------------------------------------------------------------
+    let _: () = game_state;
 
-    match &character.guild {
-        Some(guild) => {
-            println!(
-                "\n✅ Success! Logged into account {username}, guild: {}",
-                guild.name
-            );
-        }
-        None => {
-            println!("\n✅ Success! Logged into account {username}, guild: (not in a guild)");
-        }
-    }
+    let character = &game_state.character;
+    println!("\n✅ Login succeeded for {username} (character: {}).", character.name);
 }
 
 // ----------------------------------------------------------------------
