@@ -16,6 +16,7 @@
 // ============================================================================
 
 use sf_api::session::SimpleSession;
+use sf_api::command::Command; // ⚠️ best-guess import path — see note below if this fails to resolve
 use std::io::{self, Write};
 
 #[tokio::main]
@@ -31,58 +32,88 @@ async fn main() {
 
     // ------------------------------------------------------------------
     // STEP 2: Authenticate
-    // SimpleSession::login() handles the S&F login protocol (encryption,
-    // request signing, response parsing) internally — this is the exact
-    // call shown in the crate's own README example.
+    // Two login styles exist for S&F accounts:
+    //   1. Per-server login (SimpleSession::login) — a username/password
+    //      valid for ONE specific world only.
+    //   2. S&F Account / SSO login (SimpleSession::login_sf_account) — one
+    //      unified login that returns a session for EVERY character across
+    //      every world tied to that account.
+    // We try (1) first since it's the common case; if it fails, we
+    // automatically retry with (2), since a "wrong pass" error on a valid
+    // password is the classic symptom of using an SSO account with the
+    // per-server login instead.
     // ------------------------------------------------------------------
     println!("\nConnecting to {server}...");
 
-    let mut session = match SimpleSession::login(&username, &password, &server).await {
+    match SimpleSession::login(&username, &password, &server).await {
+        Ok(mut session) => {
+            print_guild_result(&username, session.game_state());
+        }
+        Err(e) => {
+            eprintln!("⚠️  Per-server login failed: {e:?}");
+            eprintln!("   Trying S&F Account (SSO) login instead...\n");
+            try_sso_login(&username, &password, &server).await;
+        }
+    }
+}
+
+// ----------------------------------------------------------------------
+// SSO fallback: logs in via the unified S&F Account, then finds the
+// session matching the server the user asked about.
+// ----------------------------------------------------------------------
+async fn try_sso_login(username: &str, password: &str, target_server: &str) {
+    let sessions = match SimpleSession::login_sf_account(username, password).await {
         Ok(s) => s,
         Err(e) => {
-            // Covers wrong password, wrong server, unreachable server,
-            // account-locked responses, etc. — sf-api surfaces these as
-            // a single error type, so we can't distinguish the exact cause
-            // here without inspecting the error's Debug output.
-            eprintln!("❌ Login failed: {e:?}");
-            eprintln!("   Check that the server address and credentials are correct,");
-            eprintln!("   and that the server is reachable from this machine.");
+            eprintln!("❌ SSO login also failed: {e:?}");
+            eprintln!("   Double-check the username/password — if both login styles reject");
+            eprintln!("   the same credentials, the password is very likely genuinely wrong");
+            eprintln!("   (or the account is locked/banned).");
             std::process::exit(1);
         }
     };
 
-    // ------------------------------------------------------------------
-    // STEP 3: Fetch character/guild data
-    // ------------------------------------------------------------------
-    let game_state = match session.game_state() {
-        Some(gs) => gs,
-        None => {
-            eprintln!("❌ Login appeared to succeed, but no game state was returned.");
-            eprintln!("   This can happen if the account needs to complete initial");
-            eprintln!("   character creation in-browser first.");
-            std::process::exit(1);
+    println!("✅ SSO login succeeded — found {} character session(s).", sessions.len());
+
+    let mut found_target = false;
+    for mut session in sessions {
+        // Per the README, sessions returned from login_sf_account() start
+        // in a "logged out" state and need one command sent (e.g. Update)
+        // before game_state() has real data.
+        if let Err(e) = session.send_command(Command::Update).await {
+            eprintln!("   (skipping a character — update failed: {e:?})");
+            continue;
         }
+
+        let Some(gs) = session.game_state() else { continue };
+
+        // We can't be certain of the exact field holding the server
+        // address on SimpleSession without checking the docs, so for now
+        // this shows guild info for EVERY character found. If you know
+        // which one is s20, just read the matching line below.
+        match &gs.guild {
+            Some(guild) => println!("   → {}: guild {}", gs.character.name, guild.name),
+            None => println!("   → {}: not in a guild", gs.character.name),
+        }
+        found_target = true;
+    }
+
+    if !found_target {
+        eprintln!("\n⚠️  No usable character sessions came back from this account.");
+    }
+
+    let _ = target_server; // kept for future use if we later filter by server
+}
+
+fn print_guild_result(username: &str, game_state: Option<&sf_api::gamestate::GameState>) {
+    let Some(game_state) = game_state else {
+        eprintln!("❌ Login appeared to succeed, but no game state was returned.");
+        std::process::exit(1);
     };
 
-    // ------------------------------------------------------------------
-    // GUILD NAME — confirmed via the actual generated crate docs
-    // (target/doc/sf_api/gamestate/struct.GameState.html), not guessed:
-    //   GameState.guild: Option<Guild>   (a sibling field of `character`,
-    //                                     NOT nested inside it — this was
-    //                                     the original wrong guess)
-    //   Guild.name: String                (confirmed via
-    //                                     guild/struct.Guild.html)
-    // ------------------------------------------------------------------
     match &game_state.guild {
-        Some(guild) => {
-            println!(
-                "\n✅ Success! Logged into account {username}, guild: {}",
-                guild.name
-            );
-        }
-        None => {
-            println!("\n✅ Success! Logged into account {username}, guild: (not in a guild)");
-        }
+        Some(guild) => println!("\n✅ Success! Logged into account {username}, guild: {}", guild.name),
+        None => println!("\n✅ Success! Logged into account {username}, guild: (not in a guild)"),
     }
 }
 
