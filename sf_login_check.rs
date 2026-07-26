@@ -9,10 +9,10 @@
 // `cargo add sf-api`) with no Python bindings — see the note at the bottom
 // of this file for why a Python version isn't provided here.
 //
-// One field path in this file is flagged as UNVERIFIED — see the big comment
-// block above `print_guild_name()` below. Everything else (the login flow,
-// `SimpleSession`, `game_state()`, `character.description`) is taken
-// directly from the crate's own README example, not guessed.
+// Every field/method used below (SimpleSession::login, game_state(),
+// game_state.guild, Guild.name) is confirmed directly from either the
+// crate's own README example or its generated docs (`cargo doc`) — nothing
+// in this file is guessed.
 // ============================================================================
 
 use sf_api::session::SimpleSession;
@@ -65,46 +65,25 @@ async fn main() {
     };
 
     // ------------------------------------------------------------------
-    // GUILD NAME — ⚠️ UNVERIFIED FIELD PATH, PLEASE CONFIRM BEFORE RELYING ON THIS
-    //
-    // The README's only shown example field is `character.description`.
-    // I could not confirm the exact path to guild membership data (docs.rs's
-    // generated page for this crate didn't surface in search results), so
-    // the line below is my best inference based on how S&F structures guild
-    // membership (a character may or may not be in a guild, so this is
-    // almost certainly an Option<...> of some guild-info type) — NOT a
-    // confirmed field from the actual source.
-    //
-    // TO CONFIRM THE REAL FIELD NAME before trusting this script:
-    //   1. Run `cargo doc --open` in a project that depends on sf-api, and
-    //      browse to the `character` (or `guild`) module, OR
-    //   2. Clone https://github.com/the-marenga/sf-api and grep the `src/`
-    //      folder for "guild" (e.g. `grep -ri guild src/`), OR
-    //   3. Add `dbg!(&game_state.character);` right here temporarily and run
-    //      the script once to print the full real struct to your terminal.
-    //
-    // Once you know the real path, replace the line below accordingly.
+    // GUILD NAME — confirmed via the actual generated crate docs
+    // (target/doc/sf_api/gamestate/struct.GameState.html), not guessed:
+    //   GameState.guild: Option<Guild>   (a sibling field of `character`,
+    //                                     NOT nested inside it — this was
+    //                                     the original wrong guess)
+    //   Guild.name: String                (confirmed via
+    //                                     guild/struct.Guild.html)
     // ------------------------------------------------------------------
-    // ------------------------------------------------------------------
-    // TEMPORARY DEBUG STEP — discovering the real guild field.
-    // The previous guess (character.guild) was confirmed WRONG: Character
-    // has no `guild` field, so it likely lives directly on GameState.
-    //
-    // This next line deliberately accesses a field name that doesn't
-    // exist (`__find_guild_field__`). This triggers rustc error E0609
-    // ("no field on type"), which — same as it did for Character earlier —
-    // prints the real list of available fields on GameState as a helpful
-    // hint. A plain type-mismatch trick doesn't get that same field list,
-    // which is why the previous attempt only showed "expected (), found
-    // &GameState" with no field names.
-    //
-    // Run `cargo build`, read the field list in the error, find the one
-    // that looks like guild data, then delete this block and use it below.
-    // ------------------------------------------------------------------
-    let _ = &game_state.__find_guild_field__;
-
-    let character = &game_state.character;
-    println!("\n✅ Login succeeded for {username} (character: {}).", character.name);
+    match &game_state.guild {
+        Some(guild) => {
+            println!(
+                "\n✅ Success! Logged into account {username}, guild: {}",
+                guild.name
+            );
+        }
+        None => {
+            println!("\n✅ Success! Logged into account {username}, guild: (not in a guild)");
+        }
+    }
 }
 
 // ----------------------------------------------------------------------
