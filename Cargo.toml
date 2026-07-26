@@ -1,0 +1,20 @@
+[package]
+name = "sf_login_check"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "sf_login_check"
+path = "sf_login_check.rs"
+
+[dependencies]
+# The real Shakes & Fidget API crate — https://github.com/the-marenga/sf-api
+# v0.4.4 was the latest release at the time this script was written;
+# run `cargo update` after adding this to pull whatever is newest.
+sf-api = "0.4"
+
+# Async runtime, required by sf-api's session/login calls (reqwest + tokio under the hood)
+tokio = { version = "1", features = ["full"] }
+
+# Masks password input in the terminal, same purpose as Python's getpass.getpass()
+rpassword = "7"
