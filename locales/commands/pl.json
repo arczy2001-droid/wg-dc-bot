@@ -119,25 +119,25 @@
   "wg_blocklist_stats": {
     "description": "Pokaż liczbę obrazów na liście blokowanych scamów"
   },
-  "sf_events_setup": {
+  "gt_events_setup": {
     "description": "Ustaw kanał, na którym pojawiają się webhooki z oficjalnymi wydarzeniami (tylko admin).",
     "options": {
       "channel": "Kanał, który odbiera oficjalne wiadomości/webhooki z wydarzeniami"
     }
   },
-  "sf_events_toggle": {
+  "gt_events_toggle": {
     "description": "Włącz lub wyłącz moduł śledzenia wydarzeń SF (tylko admin).",
     "options": {
       "state": "True aby włączyć, False aby wyłączyć"
     }
   },
-  "sf_events_reload": {
+  "gt_events_reload": {
     "description": "Przeskanuj historię kanału wydarzeń i odśwież harmonogram (tylko admin)."
   },
   "events": {
     "description": "Pokaż aktualne i nadchodzące wydarzenia w grze na ten weekend."
   },
-  "recruitment_panel": {
+  "gt_recruitment_panel": {
     "description": "Opublikuj panel rekrutacji do gildii (tylko admin).",
     "options": {
       "channel": "Kanał, na którym ma pojawić się panel rekrutacji",
@@ -148,7 +148,7 @@
       "member_role_4": "Opcjonalnie: dodatkowa ranga nadawana przyjętym kandydatom"
     }
   },
-  "attack_setup": {
+  "gt_attack_setup": {
     "description": "Skonfiguruj kanał alertów i rolę do oznaczenia dla powiadomień o ataku na dany świat.",
     "options": {
       "world_name": "Nazwa świata (np. eu20)",

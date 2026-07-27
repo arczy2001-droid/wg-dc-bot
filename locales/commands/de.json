@@ -119,25 +119,25 @@
   "wg_blocklist_stats": {
     "description": "Anzahl der Bilder in der Scam-Hash-Blockliste anzeigen"
   },
-  "sf_events_setup": {
+  "gt_events_setup": {
     "description": "Den Kanal festlegen, in dem offizielle Spiel-Event-Webhooks ankommen (nur Admin).",
     "options": {
       "channel": "Der Kanal, der offizielle Spiel-News/Event-Webhooks empfängt"
     }
   },
-  "sf_events_toggle": {
+  "gt_events_toggle": {
     "description": "Das SF-Event-Tracking-Modul aktivieren oder deaktivieren (nur Admin).",
     "options": {
       "state": "True zum Aktivieren, False zum Deaktivieren"
     }
   },
-  "sf_events_reload": {
+  "gt_events_reload": {
     "description": "Den Event-Kanal-Verlauf erneut scannen und den Zeitplan aktualisieren (nur Admin)."
   },
   "events": {
     "description": "Aktuelle und bevorstehende In-Game-Events für dieses Wochenende anzeigen."
   },
-  "recruitment_panel": {
+  "gt_recruitment_panel": {
     "description": "Das Gilden-Rekrutierungs-Bewerbungspanel veröffentlichen (nur Admin).",
     "options": {
       "channel": "Kanal, in dem das Rekrutierungspanel veröffentlicht wird",
@@ -148,7 +148,7 @@
       "member_role_4": "Optional: zusätzlicher Rang, der angenommenen Bewerbern vergeben wird"
     }
   },
-  "attack_setup": {
+  "gt_attack_setup": {
     "description": "Alarmkanal und Ping-Rolle für Angriffsbenachrichtigungen einer Welt konfigurieren.",
     "options": {
       "world_name": "Weltname (z.B. eu20)",
