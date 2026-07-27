@@ -322,6 +322,12 @@ class MyBot(commands.Bot):
         await self.tree.set_translator(CommandTranslator())  # must be set before sync()
         self.czyszczenie.start()
         self.niedzielny_ranking.start()
+        init_sf_auth_tables()
+for cmd in (gt_sf_login, gt_sf_logout, gt_sf_toggle_checks, gt_sf_status):
+    self.tree.add_command(cmd)
+
+self.sf_monitor = SFMonitor(self)
+self.sf_monitor.start()
         await self.tree.sync()
 
     @tasks.loop(hours=1)
