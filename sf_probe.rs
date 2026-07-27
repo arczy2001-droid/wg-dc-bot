@@ -43,10 +43,23 @@ async fn main() {
 
     // Try the per-server login first, then fall back to the unified S&F
     // Account (SSO) login — same two-path logic proven in sf_login_check.rs.
+    //
+    // login_method is included in the output because it's the ONLY reliable
+    // signal for whether the returned character(s) can be trusted to belong
+    // to `server`: a per-server login authenticates against exactly one
+    // world by construction, but SSO login returns every character across
+    // every world tied to the account with no per-character world field
+    // (sf-api's structs don't expose one — confirmed by reading the actual
+    // crate docs, not guessed). The caller MUST NOT trust an SSO character's
+    // world without independently verifying it (e.g. by name match) — even
+    // if only one character comes back, since a single wrong character is
+    // just as capable of producing a mislabeled alert as several.
     let mut entries: Vec<String> = Vec::new();
+    let login_method: &str;
 
     match SimpleSession::login(&username, &password, &server).await {
         Ok(mut session) => {
+            login_method = "per_server";
             if let Some(gs) = session.game_state() {
                 entries.push(character_json(&gs.character.name, gs.guild.as_ref()));
             }
@@ -54,6 +67,7 @@ async fn main() {
         Err(per_server_err) => {
             match SimpleSession::login_sf_account(&username, &password).await {
                 Ok(sessions) => {
+                    login_method = "sso";
                     for mut session in sessions {
                         if session.send_command(Command::Update).await.is_err() {
                             continue;
@@ -75,7 +89,11 @@ async fn main() {
         }
     }
 
-    println!(r#"{{"ok":true,"characters":[{}]}}"#, entries.join(","));
+    println!(
+        r#"{{"ok":true,"login_method":{},"characters":[{}]}}"#,
+        json_string(login_method),
+        entries.join(",")
+    );
 }
 
 /// Builds the JSON object for one character, including guild battle status.
