@@ -10,11 +10,23 @@
 // via `ps aux`. Reading the password from stdin keeps it out of the process
 // table entirely.
 //
+// PER-CHARACTER SERVER IDENTIFICATION:
+// SimpleSession::server_url() is a real public getter (confirmed via the
+// crate's own generated rustdoc, not guessed) returning the real server this
+// specific session authenticated against. It's called once per session, so
+// on an SSO login — which returns one session per character across every
+// world tied to the account — each character is tagged with its OWN true
+// server rather than inherited from whichever world the caller happened to
+// be checking. This replaced an earlier approach that tried to infer the
+// right character by matching login username to character name, which was
+// a heuristic guess rather than a verified fact.
+//
 // INPUT (three lines on stdin):
 //     <server>\n<username>\n<password>\n
 //
 // OUTPUT (single-line JSON on stdout), e.g.:
-//     {"ok":true,"characters":[{"name":"ArczY","guild":"The Worldguard",
+//     {"ok":true,"login_method":"sso","characters":[{"name":"ArczY",
+//      "server":"s20.sfgame.eu","guild":"The Worldguard",
 //      "attacking":{"opponent":"Some Guild","opponent_id":123,"date":"..."},
 //      "defending":null,"next_attack_possible":"..."}]}
 // or on failure:
@@ -44,24 +56,23 @@ async fn main() {
     // Try the per-server login first, then fall back to the unified S&F
     // Account (SSO) login — same two-path logic proven in sf_login_check.rs.
     //
-    // login_method is included in the output because it's the ONLY reliable
-    // signal for whether the returned character(s) can be trusted to belong
-    // to `server`: a per-server login authenticates against exactly one
-    // world by construction, but SSO login returns every character across
-    // every world tied to the account with no per-character world field
-    // (sf-api's structs don't expose one — confirmed by reading the actual
-    // crate docs, not guessed). The caller MUST NOT trust an SSO character's
-    // world without independently verifying it (e.g. by name match) — even
-    // if only one character comes back, since a single wrong character is
-    // just as capable of producing a mislabeled alert as several.
+    // Every character is now tagged with its ACTUAL server via
+    // session.server_url() — a real public getter on SimpleSession
+    // (confirmed via the crate's own generated docs, not guessed). This
+    // replaces the earlier name-matching heuristic entirely: instead of
+    // inferring "this is probably the right character because the name
+    // looks similar," the Python side can now filter on an exact, verified
+    // server match. login_method is still included for diagnostics, but is
+    // no longer load-bearing for correctness.
     let mut entries: Vec<String> = Vec::new();
     let login_method: &str;
 
     match SimpleSession::login(&username, &password, &server).await {
         Ok(mut session) => {
             login_method = "per_server";
+            let session_server = server_host(&session);
             if let Some(gs) = session.game_state() {
-                entries.push(character_json(&gs.character.name, gs.guild.as_ref()));
+                entries.push(character_json(&gs.character.name, gs.guild.as_ref(), &session_server));
             }
         }
         Err(per_server_err) => {
@@ -69,11 +80,16 @@ async fn main() {
                 Ok(sessions) => {
                     login_method = "sso";
                     for mut session in sessions {
+                        // Read the server BEFORE send_command/game_state
+                        // consume/mutate the session further, one call per
+                        // session since each character can genuinely be on
+                        // a different real server.
+                        let session_server = server_host(&session);
                         if session.send_command(Command::Update).await.is_err() {
                             continue;
                         }
                         if let Some(gs) = session.game_state() {
-                            entries.push(character_json(&gs.character.name, gs.guild.as_ref()));
+                            entries.push(character_json(&gs.character.name, gs.guild.as_ref(), &session_server));
                         }
                     }
                 }
@@ -96,12 +112,25 @@ async fn main() {
     );
 }
 
-/// Builds the JSON object for one character, including guild battle status.
-fn character_json(char_name: &str, guild: Option<&Guild>) -> String {
+/// Extracts just the hostname (e.g. "s29.sfgame.eu") from a session's real
+/// server URL, without the scheme/path — matching the plain-domain format
+/// already used everywhere else in this bot (world_name in the DB, etc.).
+fn server_host(session: &SimpleSession) -> String {
+    session
+        .server_url()
+        .host_str()
+        .map(|h| h.to_string())
+        .unwrap_or_default()
+}
+
+/// Builds the JSON object for one character, including guild battle status
+/// and the REAL server this specific session authenticated against.
+fn character_json(char_name: &str, guild: Option<&Guild>, session_server: &str) -> String {
     let Some(guild) = guild else {
         return format!(
-            r#"{{"name":{},"guild":null,"attacking":null,"defending":null,"next_attack_possible":null}}"#,
-            json_string(char_name)
+            r#"{{"name":{},"server":{},"guild":null,"attacking":null,"defending":null,"next_attack_possible":null}}"#,
+            json_string(char_name),
+            json_string(session_server)
         );
     };
 
@@ -134,8 +163,9 @@ fn character_json(char_name: &str, guild: Option<&Guild>) -> String {
     };
 
     format!(
-        r#"{{"name":{},"guild":{},"attacking":{},"defending":{},"next_attack_possible":{}}}"#,
+        r#"{{"name":{},"server":{},"guild":{},"attacking":{},"defending":{},"next_attack_possible":{}}}"#,
         json_string(char_name),
+        json_string(session_server),
         json_string(&guild.name),
         battle_json(guild.attacking.as_ref()),
         battle_json(guild.defending.as_ref()),
