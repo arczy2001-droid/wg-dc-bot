@@ -37,7 +37,11 @@ from attack_alert import (
     attack_setup,
     attack,
 )
-
+from sf_auth import (
+    init_sf_auth_tables,
+    gt_sf_login, gt_sf_logout, gt_sf_toggle_checks, gt_sf_status,
+    SFMonitor,
+)
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 OCR_API_KEY = os.getenv("OCR_SPACE_API_KEY")
 DB_PATH = "gildia.db"
