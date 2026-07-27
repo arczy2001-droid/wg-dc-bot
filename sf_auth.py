@@ -780,46 +780,36 @@ class SFMonitor:
         login_method = result.get("login_method")
 
         # ------------------------------------------------------------------
-        # CRITICAL: only a per_server login guarantees "this response is
-        # about exactly one world" — it authenticated directly against
-        # `world` by construction. An sso login returns every character
-        # across every world tied to the account with no per-character
-        # world field (sf-api's structs don't expose one — confirmed by
-        # reading the real crate docs, not guessed), so its characters can
-        # ONLY be trusted after verifying which one actually belongs here.
+        # Every character is now tagged with its REAL server (see
+        # sf_probe.rs: SimpleSession.server_url(), a genuine public getter
+        # confirmed via the crate's own generated docs — not a guess). This
+        # replaced an earlier heuristic that tried to infer the right
+        # character by matching login username to character name, which
+        # was a plausible-looking guess rather than a verified fact, and
+        # produced at least one real mislabeled alert (a guild on S20
+        # showed up tagged "S19.SFGAME.EU") before this fix.
         #
-        # IMPORTANT: this is keyed on login_method, NOT on
-        # len(characters) == 1. An earlier version of this fix assumed a
-        # single returned character was automatically safe — that was
-        # wrong: an sso login can return exactly one character and it can
-        # still be the WRONG one (e.g. username typo, or an SSO account
-        # whose login name isn't a character name at all). A single wrong
-        # character mislabels an alert exactly as badly as several would —
-        # this is what produced the "S19.SFGAME.EU" alert for a guild
-        # that's actually on S20.
-        #
-        # Fix: whenever login_method is "sso" (regardless of character
-        # count), filter down to the ONE character whose in-game name
-        # matches the registered username (case-insensitive — S&F login
-        # usernames and character names often differ only in case, e.g.
-        # "arczy" -> "ArczY", confirmed against this bot's own real test
-        # data). If that match isn't unique, skip rather than guess.
+        # Filtering is now exact: only characters whose verified `server`
+        # matches this registration's world_name are ever alerted on. This
+        # also means a probe that (for whatever reason) omits `server` for
+        # a character — e.g. an older probe binary that hasn't been
+        # rebuilt yet — is treated as unverifiable and skipped, rather than
+        # silently trusted the way an unlabelled character used to be.
         # ------------------------------------------------------------------
-        if login_method == "sso":
-            matches = [c for c in characters if c.get("name", "").lower() == acc["sf_username"].lower()]
-            if len(matches) == 1:
-                characters = matches
-            else:
-                _record_check(
-                    guild_id, acc["discord_user_id"], world,
-                    f"⚠️ SSO login returned {len(characters)} character(s) and "
-                    f"{'none' if not matches else 'more than one'} matched the username "
-                    f"'{acc['sf_username']}' — skipped to avoid a mislabeled alert. "
-                    f"Re-run /gt_sf_login with your exact character name."
-                )
-                print(f"sf_auth: {world} — ambiguous SSO character match "
-                      f"({len(matches)} of {len(characters)} matched '{acc['sf_username']}'), skipping this check")
-                return
+        matches = [c for c in characters if c.get("server", "").lower() == world.lower()]
+        skipped = len(characters) - len(matches)
+        if skipped:
+            print(f"sf_auth: {world} — ignored {skipped} character(s) from this probe response "
+                  f"belonging to a different (or unverified) server")
+        characters = matches
+
+        if not characters:
+            _record_check(
+                guild_id, acc["discord_user_id"], world,
+                f"⚠️ No character found on {world} in this login's response "
+                f"({login_method or 'unknown'} login). Re-run /gt_sf_login if this persists."
+            )
+            return
 
         _record_check(guild_id, acc["discord_user_id"], world,
                       f"✅ ok — {len(characters)} character(s)")
