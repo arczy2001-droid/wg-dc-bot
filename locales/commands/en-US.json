@@ -1,97 +1,88 @@
 {
-  "wg_add_world": {
-    "description": "Add world and assign a channel",
+  "gt_world_add": {
+    "description": "Add a world and assign it a channel",
     "options": {
       "nazwa": "World name",
       "kanal": "Channel where this world's reports will be posted"
     }
   },
-  "wg_delete_world": {
-    "description": "Deleting world",
+  "gt_world_delete": {
+    "description": "Delete a world",
     "options": {
       "nazwa": "World name to delete"
     }
   },
-  "wg_worlds": {
-    "description": "List of the worlds"
+  "gt_worlds": {
+    "description": "List all configured worlds"
   },
-  "wg_add_member": {
-    "description": "Assign players to a world",
+  "gt_member_add": {
+    "description": "Assign players to a world's roster",
     "options": {
       "swiat": "World name",
       "lista": "Player nicknames, separated by commas or new lines"
     }
   },
-  "wg_delete_member": {
-    "description": "Deleting player",
+  "gt_member_delete": {
+    "description": "Remove a player from a world",
     "options": {
       "swiat": "World name",
       "nick": "Player nickname to remove"
     }
   },
-  "wg_member_list": {
-    "description": "Member list",
+  "gt_members": {
+    "description": "Show a world's member list",
     "options": {
       "swiat": "World name"
     }
   },
-  "wg": {
-    "description": "Upload the activity report",
+  "report": {
+    "description": "Upload a battle screenshot; OCR reads absences",
     "options": {
       "swiat": "World name",
       "screen": "Screenshot of the battle/activity list",
       "data": "Report date: DD.MM or DD.MM.YYYY (defaults to today if omitted)"
     }
   },
-  "wg_absent_list": {
-    "description": "List of absences",
+  "gt_absent_list": {
+    "description": "Show absence ranking (7d / 14d / 31d / all-time)",
     "options": {
       "swiat": "World name",
-      "okres": "Time window to include (default: all time)"
+      "okres": "Time window to include: 7d / 14d / 31d / all-time (default: all-time)"
     }
   },
-  "wg_delete_raport": {
-    "description": "Deleting last assigned report",
+  "gt_report_delete": {
+    "description": "Undo the last submitted report",
     "options": {
       "swiat": "World name"
     }
   },
-  "wg_add_absent": {
-    "description": "Add single absence to a member",
+  "gt_absent_add": {
+    "description": "Manually add one absence",
     "options": {
       "swiat": "World name",
       "nick": "Player nickname",
       "data": "Report date: DD.MM or DD.MM.YYYY (defaults to today)"
     }
   },
-  "wg_cleanup_reports": {
-    "description": "Delete reports for one world — either by exact date or by age",
-    "options": {
-      "swiat": "World name",
-      "data": "Exact battle date to delete (DD.MM[.YYYY]). Omit to delete reports older than 3 days."
-    }
-  },
-  "wg_delete_absent": {
-    "description": "Delete single absence for a member",
+  "gt_absent_delete": {
+    "description": "Remove one absence entry",
     "options": {
       "swiat": "World name",
       "nick": "Player nickname"
     }
   },
-  "wg_clear_all": {
-    "description": "Clearing every absence report (this server only)"
+  "gt_wipe": {
+    "description": "Wipe all absence data for this server"
   },
-  "test_scrapera": {
-    "description": "Test the bot's connection to SFDataHub"
+  "gt_reports_wipe": {
+    "description": "Delete reports by exact date or by age",
+    "options": {
+      "swiat": "World name",
+      "data": "Exact battle date to delete (DD.MM[.YYYY]). Omit to delete reports older than 3 days."
+    }
   },
-  "setup": {
-    "description": "Run the one-time server configuration wizard (admin only)."
-  },
-  "setup_reset": {
-    "description": "Unlock configuration so /setup can be run again (admin only)."
-  },
-  "wg_set_ranking": {
-    "description": "Configure or disable the automatic weekly absence ranking for one world",
+  "gt_ranking_set": {
+    "description": "Turn the weekly auto-ranking post on/off",
     "options": {
       "swiat": "World this schedule applies to",
       "enabled": "Turn the automatic weekly ranking on or off for this world",
@@ -100,45 +91,51 @@
       "minute": "Minute (only used if enabled)"
     }
   },
-  "wg_ranking_status": {
-    "description": "Show the current automatic ranking schedule",
+  "gt_ranking_status": {
+    "description": "Show the current ranking schedule",
     "options": {
       "swiat": "Show only this world's schedule (omit to list every world)"
     }
   },
-  "settings": {
-    "description": "Change a single server setting without resetting everything (admin only)."
-  },
-  "wg_block_image": {
-    "description": "Manually add an image to the scam blocklist",
+  "gt_block_image": {
+    "description": "Manually blocklist a known scam image",
     "options": {
       "image": "The image to block",
       "reason": "Why this image is being blocked (optional)"
     }
   },
-  "wg_blocklist_stats": {
-    "description": "Show how many images are in the scam hash blocklist"
+  "gt_blocklist_stats": {
+    "description": "Show scam-image blocklist stats"
   },
-  "sf_events_setup": {
-    "description": "Set the channel where official game event webhooks arrive (admin only).",
+  "gt_setup": {
+    "description": "One-time interactive config wizard"
+  },
+  "gt_setup_reset": {
+    "description": "Unlock config to re-run /gt_setup"
+  },
+  "gt_setup_settings": {
+    "description": "Edit a single setting without a full reset"
+  },
+  "gt_events_setup": {
+    "description": "Set the webhook channel for event posts",
     "options": {
       "channel": "The channel that receives official game news/event webhooks"
     }
   },
-  "sf_events_toggle": {
-    "description": "Enable or disable the SF events tracking module (admin only).",
+  "gt_events_toggle": {
+    "description": "Enable/disable event tracking",
     "options": {
       "state": "True to enable, False to disable"
     }
   },
-  "sf_events_reload": {
-    "description": "Re-scan the events channel history and reload the event schedule (admin only)."
+  "gt_events_reload": {
+    "description": "Re-scan channel history, reload schedule"
   },
   "events": {
-    "description": "Show current and upcoming in-game events for this weekend."
+    "description": "Show this weekend's events"
   },
-  "recruitment_panel": {
-    "description": "Post the guild recruitment application panel (admin only).",
+  "gt_recruitment_panel": {
+    "description": "Post the \"Apply to Guild\" panel",
     "options": {
       "channel": "Channel to post the recruitment panel in",
       "officer_role": "Role that can review and decide on applications",
@@ -148,8 +145,8 @@
       "member_role_4": "Optional: additional rank given to accepted applicants"
     }
   },
-  "attack_setup": {
-    "description": "Configure the alert channel and ping role for a world's attack notifications.",
+  "gt_attack_setup": {
+    "description": "Set alert channel + ping role per world",
     "options": {
       "world_name": "World name (e.g. eu20)",
       "channel": "Channel where attack alerts for this world will be posted",
@@ -157,19 +154,10 @@
     }
   },
   "attack": {
-    "description": "Trigger a guild attack for a specific world.",
+    "description": "Trigger an attack/raid alert",
     "options": {
       "world_name": "World name (e.g. eu20)",
       "time": "Attack time, e.g. 20:00 (omit for an immediate 'happening now' alert)"
-    }
-  },
-  "gt_sf_toggle": {
-    "description": "Configure per-world attack/defense alert channels, or view current settings.",
-    "options": {
-      "world_name": "World to configure (pick from the list)",
-      "attack_channel": "Channel for attack alerts (leave unset to keep current)",
-      "defense_channel": "Channel for defense alerts (leave unset to keep current)",
-      "mute_defense": "Suppress defense alerts entirely (True/False)"
     }
   }
 }
