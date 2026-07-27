@@ -310,6 +310,7 @@ class MyBot(commands.Bot):
         init_sf_events_tables()
         init_recruitment_tables()
         init_attack_alert_table()
+        from attack_alert import gt_sf_toggle
         self.tree.add_command(setup_command)
         self.tree.add_command(setup_reset_command)
         self.tree.add_command(settings_command)
@@ -320,6 +321,7 @@ class MyBot(commands.Bot):
         self.tree.add_command(recruitment_panel)
         self.tree.add_command(attack_setup)
         self.tree.add_command(attack)
+        self.tree.add_command(gt_sf_toggle)
         await register_persistent_views(self)  # re-attach buttons after restart
         await self.tree.set_translator(CommandTranslator())  # must be set before sync()
         self.czyszczenie.start()
