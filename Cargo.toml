@@ -3,18 +3,23 @@ name = "sf_login_check"
 version = "0.1.0"
 edition = "2021"
 
+# Interactive login checker (human-facing, prompts on the terminal)
 [[bin]]
 name = "sf_login_check"
 path = "sf_login_check.rs"
 
+# Machine-readable probe used by the Python Discord bot.
+# Reads "server\nusername\npassword" on stdin, prints one JSON line on stdout.
+[[bin]]
+name = "sf_probe"
+path = "sf_probe.rs"
+
 [dependencies]
 # The real Shakes & Fidget API crate — https://github.com/the-marenga/sf-api
-# v0.4.4 was the latest release at the time this script was written;
-# run `cargo update` after adding this to pull whatever is newest.
 sf-api = "0.4"
 
-# Async runtime, required by sf-api's session/login calls (reqwest + tokio under the hood)
+# Async runtime, required by sf-api's session/login calls
 tokio = { version = "1", features = ["full"] }
 
-# Masks password input in the terminal, same purpose as Python's getpass.getpass()
+# Masks password input in the terminal (used only by sf_login_check)
 rpassword = "7"

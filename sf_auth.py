@@ -1,0 +1,751 @@
+"""
+sf_auth.py
+==========
+Discord-based Shakes & Fidget authentication, encrypted credential storage,
+and hourly guild attack/defense monitoring.
+
+╔══════════════════════════════════════════════════════════════════════════╗
+║ READ THIS FIRST — TWO DESIGN DECISIONS THAT DIFFER FROM A NAIVE APPROACH ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+1. THE PASSWORD IS COLLECTED VIA A MODAL, NOT A SLASH COMMAND PARAMETER.
+   A command like `/login <server> <username> <password>` is unsafe: Discord
+   renders the slash-command *invocation* — including the values you typed
+   into its parameters — to other people who can see the channel. Making the
+   bot's *reply* ephemeral does not hide the invocation. `discord.ui.Modal`
+   input is only ever visible to the person who filled it in, so that's what
+   this module uses.
+
+2. THE GAME CALL GOES THROUGH A RUST SUBPROCESS, NOT A PYTHON LIBRARY.
+   `sf-api` is a Rust crate with no Python bindings, and S&F's login protocol
+   is encrypted/undocumented, so it cannot be reimplemented reliably in
+   aiohttp. This module shells out to the `sf_probe` binary (built from
+   sf_probe.rs) and parses its JSON. Credentials are handed to it on STDIN,
+   never as argv — argv is world-readable via `ps aux`.
+
+──────────────────────────────────────────────────────────────────────────
+HOW THE ENCRYPTION WORKS
+──────────────────────────────────────────────────────────────────────────
+Passwords are encrypted with Fernet (`cryptography` library), which is
+AES-128-CBC for confidentiality plus an HMAC-SHA256 authentication tag, so
+ciphertext that has been tampered with fails to decrypt rather than
+silently returning garbage.
+
+    plaintext password ──Fernet.encrypt(key)──► ciphertext ──► SQLite BLOB
+    SQLite BLOB ──Fernet.decrypt(key)──► plaintext (held in RAM only,
+                                          for the duration of one probe call)
+
+The key lives in the SF_ENCRYPTION_KEY environment variable (put it in your
+.env), NEVER in the database and never in this file. Generate one once with:
+
+    python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+If SF_ENCRYPTION_KEY is missing or malformed, this module refuses to store
+or read credentials at all rather than falling back to anything weaker.
+
+⚠️ HONEST LIMITATION — PLEASE READ:
+Encryption-at-rest protects against someone who obtains a *copy of the
+database file alone* (a stolen backup, a leaked volume snapshot). It does
+NOT protect against someone who compromises the VPS itself, because the key
+sits in .env on that same machine — anyone with shell access has both
+halves. This is the standard, unavoidable tradeoff for a bot that must log
+in unattended on a schedule: it needs the real password at 03:00 with
+nobody around to type it, so it must be able to recover the plaintext.
+Treat "the bot can log in by itself" and "even I cannot recover these
+passwords" as mutually exclusive — you can't have both.
+
+Practical consequences worth accepting deliberately before deploying this:
+  • Anyone with root/shell on the VPS can recover every stored password.
+  • S&F passwords are often reused elsewhere; a breach here can cascade.
+  • Automating game accounts may violate Playa Games' terms — the sf-api
+    project's own README carries a ban warning. Storing OTHER PEOPLE'S
+    credentials means you'd be putting their accounts at that risk too, so
+    the safest scope is your own account only (see ALLOW_OTHER_USERS below).
+
+INTEGRATION (in main.py):
+
+    from sf_auth import (
+        init_sf_auth_tables,
+        gt_sf_login, gt_sf_logout, gt_sf_toggle_checks, gt_sf_status,
+        SFMonitor,
+    )
+
+    # in setup_hook, before tree.sync():
+    init_sf_auth_tables()
+    for cmd in (gt_sf_login, gt_sf_logout, gt_sf_toggle_checks, gt_sf_status):
+        self.tree.add_command(cmd)
+    self.sf_monitor = SFMonitor(self)
+    self.sf_monitor.start()
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import sqlite3
+from datetime import datetime, timedelta, timezone
+from typing import Any, Optional
+
+import discord
+from discord import app_commands
+from discord.ext import tasks
+
+DB_PATH = "gildia.db"
+
+# Path to the compiled Rust probe binary (see sf_probe.rs / Cargo.toml).
+# Override with SF_PROBE_PATH in .env if you build it elsewhere.
+SF_PROBE_PATH = os.getenv("SF_PROBE_PATH", "./target/release/sf_probe")
+
+# When False, a member can only register their OWN S&F account and only an
+# administrator may register on behalf of anyone else. Leaving this False is
+# strongly recommended — see the honest-limitation note in the docstring.
+ALLOW_OTHER_USERS = False
+
+# How long a single probe may run before we give up (network timeouts).
+PROBE_TIMEOUT_SECONDS = 60
+
+
+# ---------------------------------------------------------------------------
+# ENCRYPTION
+# ---------------------------------------------------------------------------
+
+class EncryptionUnavailable(RuntimeError):
+    """Raised when SF_ENCRYPTION_KEY is missing or invalid.
+
+    We deliberately raise instead of degrading to plaintext storage: a bot
+    that silently stores passwords unencrypted because a key was missing is
+    far worse than a bot that refuses to start the feature.
+    """
+
+
+def _get_fernet():
+    """Builds the Fernet cipher from SF_ENCRYPTION_KEY.
+
+    Imported lazily so the rest of the bot still runs if `cryptography`
+    isn't installed — only this module's commands will fail, with a clear
+    message, rather than the whole bot failing to boot.
+    """
+    try:
+        from cryptography.fernet import Fernet
+    except ImportError as exc:
+        raise EncryptionUnavailable(
+            "The `cryptography` package is not installed. Run: pip install cryptography"
+        ) from exc
+
+    key = os.getenv("SF_ENCRYPTION_KEY")
+    if not key:
+        raise EncryptionUnavailable(
+            "SF_ENCRYPTION_KEY is not set. Generate one with:\n"
+            '  python3 -c "from cryptography.fernet import Fernet; '
+            'print(Fernet.generate_key().decode())"\n'
+            "then add it to your .env file."
+        )
+    try:
+        return Fernet(key.encode() if isinstance(key, str) else key)
+    except Exception as exc:
+        raise EncryptionUnavailable(
+            "SF_ENCRYPTION_KEY is malformed — it must be a urlsafe base64 32-byte "
+            "key produced by Fernet.generate_key()."
+        ) from exc
+
+
+def encrypt_password(plaintext: str) -> bytes:
+    """plaintext ──► Fernet ciphertext (what actually lands in SQLite)."""
+    return _get_fernet().encrypt(plaintext.encode("utf-8"))
+
+
+def decrypt_password(ciphertext: bytes) -> str:
+    """Fernet ciphertext ──► plaintext, held in RAM only for one probe call.
+
+    Fernet verifies the HMAC before decrypting, so a tampered-with or
+    wrong-key blob raises rather than returning corrupted bytes.
+    """
+    return _get_fernet().decrypt(ciphertext).decode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# DATABASE
+# ---------------------------------------------------------------------------
+
+def init_sf_auth_tables() -> None:
+    """Idempotent — safe to call on every startup."""
+    conn = sqlite3.connect(DB_PATH)
+
+    # One row per (guild, discord user, game world).
+    # password_enc is a Fernet BLOB — plaintext is NEVER written to this table.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sf_accounts (
+            guild_id        TEXT NOT NULL,
+            discord_user_id TEXT NOT NULL,
+            world_name      TEXT NOT NULL,
+            sf_username     TEXT NOT NULL,
+            password_enc    BLOB NOT NULL,
+            auto_checks     INTEGER NOT NULL DEFAULT 1,
+            last_check      TIMESTAMP,
+            last_status     TEXT,
+            created_at      TIMESTAMP NOT NULL,
+            PRIMARY KEY (guild_id, discord_user_id, world_name)
+        )
+    """)
+
+    # Remembers which battles we've already announced, so the hourly loop
+    # doesn't re-ping the same role about the same attack 24 times a day.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sf_alert_state (
+            guild_id    TEXT NOT NULL,
+            world_name  TEXT NOT NULL,
+            kind        TEXT NOT NULL,   -- 'attacking' | 'defending'
+            battle_date TEXT NOT NULL,   -- RFC3339 string from the probe
+            alerted_at  TIMESTAMP NOT NULL,
+            PRIMARY KEY (guild_id, world_name, kind, battle_date)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def _save_account(guild_id: int, discord_user_id: int, world_name: str,
+                  sf_username: str, password_plain: str) -> None:
+    """Encrypts, then stores. The plaintext argument is never persisted."""
+    password_enc = encrypt_password(password_plain)
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        """INSERT INTO sf_accounts
+           (guild_id, discord_user_id, world_name, sf_username, password_enc,
+            auto_checks, last_check, last_status, created_at)
+           VALUES (?, ?, ?, ?, ?, 1, NULL, NULL, ?)
+           ON CONFLICT(guild_id, discord_user_id, world_name) DO UPDATE SET
+               sf_username  = excluded.sf_username,
+               password_enc = excluded.password_enc""",
+        (str(guild_id), str(discord_user_id), world_name.lower(), sf_username,
+         password_enc, datetime.now(timezone.utc).isoformat())
+    )
+    conn.commit()
+    conn.close()
+
+
+def _delete_account(guild_id: int, discord_user_id: int, world_name: Optional[str]) -> int:
+    conn = sqlite3.connect(DB_PATH)
+    if world_name:
+        cur = conn.execute(
+            "DELETE FROM sf_accounts WHERE guild_id=? AND discord_user_id=? AND world_name=?",
+            (str(guild_id), str(discord_user_id), world_name.lower())
+        )
+    else:
+        cur = conn.execute(
+            "DELETE FROM sf_accounts WHERE guild_id=? AND discord_user_id=?",
+            (str(guild_id), str(discord_user_id))
+        )
+    deleted = cur.rowcount
+    conn.commit()
+    conn.close()
+    return deleted
+
+
+def _set_auto_checks(guild_id: int, discord_user_id: int, world_name: Optional[str],
+                     enabled: bool) -> int:
+    conn = sqlite3.connect(DB_PATH)
+    if world_name:
+        cur = conn.execute(
+            "UPDATE sf_accounts SET auto_checks=? WHERE guild_id=? AND discord_user_id=? AND world_name=?",
+            (1 if enabled else 0, str(guild_id), str(discord_user_id), world_name.lower())
+        )
+    else:
+        cur = conn.execute(
+            "UPDATE sf_accounts SET auto_checks=? WHERE guild_id=? AND discord_user_id=?",
+            (1 if enabled else 0, str(guild_id), str(discord_user_id))
+        )
+    changed = cur.rowcount
+    conn.commit()
+    conn.close()
+    return changed
+
+
+def _get_active_accounts() -> list[dict[str, Any]]:
+    """Every account with auto_checks enabled, across all guilds."""
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute(
+        """SELECT guild_id, discord_user_id, world_name, sf_username, password_enc
+           FROM sf_accounts WHERE auto_checks=1"""
+    ).fetchall()
+    conn.close()
+    return [
+        {"guild_id": r[0], "discord_user_id": r[1], "world_name": r[2],
+         "sf_username": r[3], "password_enc": r[4]}
+        for r in rows
+    ]
+
+
+def _record_check(guild_id: str, discord_user_id: str, world_name: str, status: str) -> None:
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        """UPDATE sf_accounts SET last_check=?, last_status=?
+           WHERE guild_id=? AND discord_user_id=? AND world_name=?""",
+        (datetime.now(timezone.utc).isoformat(), status[:200],
+         guild_id, discord_user_id, world_name)
+    )
+    conn.commit()
+    conn.close()
+
+
+def _already_alerted(guild_id: str, world_name: str, kind: str, battle_date: str) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        """SELECT 1 FROM sf_alert_state
+           WHERE guild_id=? AND world_name=? AND kind=? AND battle_date=?""",
+        (guild_id, world_name, kind, battle_date)
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def _mark_alerted(guild_id: str, world_name: str, kind: str, battle_date: str) -> None:
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "INSERT OR IGNORE INTO sf_alert_state VALUES (?, ?, ?, ?, ?)",
+        (guild_id, world_name, kind, battle_date, datetime.now(timezone.utc).isoformat())
+    )
+    # Housekeeping: drop alert records older than 30 days so this table
+    # doesn't grow without bound.
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    conn.execute("DELETE FROM sf_alert_state WHERE alerted_at < ?", (cutoff,))
+    conn.commit()
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# TIMEZONE FORMATTING
+# ---------------------------------------------------------------------------
+
+# guild_config.timezone stores the short labels offered by the /gt_setup
+# wizard. Map them to IANA zones that zoneinfo understands.
+_TZ_ALIASES = {
+    "UTC": "UTC",
+    "GMT": "GMT",
+    "CET": "CET",
+    "EET": "EET",
+    "EST": "America/New_York",   # honours US DST, unlike fixed-offset "EST"
+    "PST": "America/Los_Angeles",
+}
+
+
+def _get_guild_timezone(guild_id: str) -> str:
+    """Reads the timezone chosen during /gt_setup. Falls back to UTC."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT timezone FROM guild_config WHERE guild_id=?", (guild_id,)
+    ).fetchone()
+    conn.close()
+    return row[0] if row and row[0] else "UTC"
+
+
+def format_battle_time(rfc3339: str, guild_id: str) -> str:
+    """Converts the probe's RFC3339 timestamp into the guild's local timezone.
+
+    Falls back to showing the raw value rather than raising — a mangled
+    timestamp should never stop an attack alert from being delivered.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        dt = datetime.fromisoformat(rfc3339)
+        tz_label = _get_guild_timezone(guild_id)
+        tz = ZoneInfo(_TZ_ALIASES.get(tz_label, tz_label))
+        return f"{dt.astimezone(tz).strftime('%d.%m.%Y %H:%M')} ({tz_label})"
+    except Exception as exc:  # noqa: BLE001 - deliberately broad, see docstring
+        print(f"sf_auth: could not format '{rfc3339}' ({exc}); showing raw value")
+        return rfc3339
+
+
+# ---------------------------------------------------------------------------
+# GAME PROBE (Rust subprocess bridge)
+# ---------------------------------------------------------------------------
+
+async def run_probe(server: str, username: str, password: str) -> dict[str, Any]:
+    """Runs sf_probe and returns its parsed JSON.
+
+    The password is written to the child's STDIN and never appears in argv,
+    so it stays out of the process table.
+
+    Always returns a dict with at least {"ok": bool}; transport-level
+    problems are converted into {"ok": False, "error": ...} so callers only
+    ever need one error path.
+    """
+    if not os.path.exists(SF_PROBE_PATH):
+        return {"ok": False, "error": (
+            f"probe binary not found at {SF_PROBE_PATH} — build it with "
+            f"`cargo build --release --bin sf_probe`"
+        )}
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            SF_PROBE_PATH,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        payload = f"{server}\n{username}\n{password}\n".encode("utf-8")
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(payload), timeout=PROBE_TIMEOUT_SECONDS
+        )
+    except asyncio.TimeoutError:
+        return {"ok": False, "error": f"probe timed out after {PROBE_TIMEOUT_SECONDS}s"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"probe failed to run: {exc}"}
+
+    raw = stdout.decode("utf-8", errors="replace").strip()
+    if not raw:
+        err = stderr.decode("utf-8", errors="replace").strip()
+        return {"ok": False, "error": f"probe produced no output. stderr: {err[:300]}"}
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"ok": False, "error": f"probe output was not valid JSON: {raw[:300]}"}
+
+
+# ---------------------------------------------------------------------------
+# LOGIN — Modal-based (see design note #1 at the top of this file)
+# ---------------------------------------------------------------------------
+
+class SFLoginModal(discord.ui.Modal, title="Shakes & Fidget Login"):
+    """Modal input is visible ONLY to the user who opened it.
+
+    This is the whole reason we don't take the password as a slash-command
+    parameter — those are rendered in-channel alongside the invocation.
+    """
+
+    server = discord.ui.TextInput(
+        label="Server",
+        placeholder="e.g. s20.sfgame.eu",
+        max_length=64,
+        required=True,
+    )
+    username = discord.ui.TextInput(
+        label="S&F Username",
+        max_length=64,
+        required=True,
+    )
+    password = discord.ui.TextInput(
+        label="S&F Password",
+        placeholder="Only ever visible to you; stored encrypted",
+        max_length=128,
+        required=True,
+    )
+
+    def __init__(self, target_user: discord.Member):
+        super().__init__()
+        self.target_user = target_user
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # ephemeral=True: nobody else in the channel sees any of this.
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        server = self.server.value.strip()
+        username = self.username.value.strip()
+        password = self.password.value
+
+        # Fail fast if encryption isn't configured — we must never reach the
+        # storage step without a working key.
+        try:
+            _get_fernet()
+        except EncryptionUnavailable as exc:
+            await interaction.followup.send(f"❌ Encryption is not configured:\n```{exc}```", ephemeral=True)
+            return
+
+        # Validate the credentials BEFORE storing anything, so we never
+        # persist a password that doesn't actually work.
+        result = await run_probe(server, username, password)
+
+        if not result.get("ok"):
+            await interaction.followup.send(
+                f"❌ Login failed — nothing was saved.\n```{str(result.get('error'))[:400]}```",
+                ephemeral=True,
+            )
+            return
+
+        _save_account(interaction.guild_id, self.target_user.id, server, username, password)
+
+        chars = result.get("characters", [])
+        guild_names = sorted({c["guild"] for c in chars if c.get("guild")})
+        summary = ", ".join(guild_names) if guild_names else "(no guild found)"
+
+        await interaction.followup.send(
+            f"✅ Login verified and stored **encrypted** for `{server}`.\n"
+            f"Characters found: **{len(chars)}** · Guild(s): **{summary}**\n"
+            f"Hourly checks are **on** — use `/gt_sf_toggle_checks` to change that.",
+            ephemeral=True,
+        )
+
+
+@app_commands.command(
+    name="gt_sf_login",
+    description="Securely connect a Shakes & Fidget account for guild monitoring.",
+)
+@app_commands.describe(
+    user="Admin only: register on behalf of another member (defaults to yourself)"
+)
+@app_commands.guild_only()
+async def gt_sf_login(interaction: discord.Interaction, user: Optional[discord.Member] = None):
+    target = user or interaction.user
+
+    # Registering someone else's credentials is gated: it means holding
+    # another person's game password, so only admins may do it, and only if
+    # ALLOW_OTHER_USERS is switched on deliberately.
+    if target.id != interaction.user.id:
+        if not ALLOW_OTHER_USERS:
+            await interaction.response.send_message(
+                "❌ Registering another member's account is disabled on this bot.\n"
+                "Ask them to run `/gt_sf_login` themselves — that way nobody else "
+                "ever handles their password.",
+                ephemeral=True,
+            )
+            return
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ Only administrators can register an account for another member.",
+                ephemeral=True,
+            )
+            return
+
+    await interaction.response.send_modal(SFLoginModal(target))
+
+
+# ---------------------------------------------------------------------------
+# LOGOUT
+# ---------------------------------------------------------------------------
+
+@app_commands.command(
+    name="gt_sf_logout",
+    description="Delete your stored Shakes & Fidget credentials from the bot.",
+)
+@app_commands.describe(world="Only remove this world (omit to remove all of yours)")
+@app_commands.guild_only()
+async def gt_sf_logout(interaction: discord.Interaction, world: Optional[str] = None):
+    deleted = _delete_account(interaction.guild_id, interaction.user.id, world)
+    if deleted:
+        await interaction.response.send_message(
+            f"✅ Removed **{deleted}** stored account(s). The encrypted password has been deleted.",
+            ephemeral=True,
+        )
+    else:
+        await interaction.response.send_message(
+            "ℹ️ You have no stored accounts matching that.", ephemeral=True
+        )
+
+
+# ---------------------------------------------------------------------------
+# TOGGLE AUTOMATIC CHECKS
+# ---------------------------------------------------------------------------
+
+@app_commands.command(
+    name="gt_sf_toggle_checks",
+    description="Turn the hourly guild attack/defense check on or off for your account.",
+)
+@app_commands.describe(
+    state="True to enable hourly checks, False to disable",
+    world="Apply to this world only (omit for all of your accounts)",
+)
+@app_commands.guild_only()
+async def gt_sf_toggle_checks(interaction: discord.Interaction, state: bool,
+                              world: Optional[str] = None):
+    changed = _set_auto_checks(interaction.guild_id, interaction.user.id, world, state)
+    if not changed:
+        await interaction.response.send_message(
+            "ℹ️ No stored accounts matched — run `/gt_sf_login` first.", ephemeral=True
+        )
+        return
+    await interaction.response.send_message(
+        f"{'✅ Enabled' if state else '🔕 Disabled'} hourly checks for **{changed}** account(s).",
+        ephemeral=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# STATUS
+# ---------------------------------------------------------------------------
+
+@app_commands.command(
+    name="gt_sf_status",
+    description="Show your connected Shakes & Fidget accounts and their check status.",
+)
+@app_commands.guild_only()
+async def gt_sf_status(interaction: discord.Interaction):
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute(
+        """SELECT world_name, sf_username, auto_checks, last_check, last_status
+           FROM sf_accounts WHERE guild_id=? AND discord_user_id=?
+           ORDER BY world_name""",
+        (str(interaction.guild_id), str(interaction.user.id))
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        await interaction.response.send_message(
+            "ℹ️ You have no connected accounts. Use `/gt_sf_login` to add one.", ephemeral=True
+        )
+        return
+
+    lines = ["**Your connected Shakes & Fidget accounts:**"]
+    for world, user, auto, last_check, last_status in rows:
+        state = "✅ on" if auto else "🔕 off"
+        when = last_check[:16].replace("T", " ") if last_check else "never"
+        lines.append(f"• `{world}` as **{user}** — hourly checks {state}, last check: {when}")
+        if last_status:
+            lines.append(f"  ↳ {last_status}")
+
+    await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+
+# ---------------------------------------------------------------------------
+# BACKGROUND MONITOR
+# ---------------------------------------------------------------------------
+
+class SFMonitor:
+    """Hourly loop that probes every enabled account and posts attack alerts.
+
+    Kept as a class (rather than a bare @tasks.loop function) so it can hold
+    a reference to the bot for channel/role lookups without relying on
+    module-level globals.
+    """
+
+    def __init__(self, bot: discord.Client) -> None:
+        self.bot = bot
+        self._loop = tasks.loop(hours=1)(self._run)
+        self._loop.before_loop(self._before)
+
+    def start(self) -> None:
+        self._loop.start()
+
+    def stop(self) -> None:
+        self._loop.cancel()
+
+    async def _before(self) -> None:
+        # Don't probe before the bot can resolve channels/roles.
+        await self.bot.wait_until_ready()
+
+    async def _run(self) -> None:
+        accounts = _get_active_accounts()
+        if not accounts:
+            return
+        print(f"sf_auth: hourly check running for {len(accounts)} account(s)")
+
+        for acc in accounts:
+            try:
+                await self._check_account(acc)
+            except Exception as exc:  # noqa: BLE001
+                # One bad account must never kill the loop for the others.
+                print(f"sf_auth: unexpected error checking {acc['world_name']}: {exc}")
+
+    async def _check_account(self, acc: dict[str, Any]) -> None:
+        guild_id = acc["guild_id"]
+        world = acc["world_name"]
+
+        # Decrypt only for the duration of this call.
+        try:
+            password = decrypt_password(acc["password_enc"])
+        except EncryptionUnavailable as exc:
+            print(f"sf_auth: cannot decrypt for {world}: {exc}")
+            return
+        except Exception:
+            # Wrong key or corrupted blob — flag it so the user can re-login
+            # rather than silently failing forever.
+            _record_check(guild_id, acc["discord_user_id"], world,
+                          "❌ stored password could not be decrypted — please re-run /gt_sf_login")
+            await self._dm_user(acc["discord_user_id"],
+                                f"⚠️ Your stored S&F credentials for `{world}` could not be "
+                                f"decrypted (the encryption key may have changed). "
+                                f"Please run `/gt_sf_login` again to reconnect.")
+            return
+
+        result = await run_probe(world, acc["sf_username"], password)
+        del password  # drop the plaintext reference as soon as we're done
+
+        if not result.get("ok"):
+            error = str(result.get("error", "unknown error"))
+            _record_check(guild_id, acc["discord_user_id"], world, f"❌ {error[:150]}")
+
+            # Distinguish "your login stopped working" (needs the user to act)
+            # from a transient network blip (which will just retry next hour).
+            if any(tok in error.lower() for tok in ("wrong pass", "invalid", "auth", "password")):
+                await self._dm_user(
+                    acc["discord_user_id"],
+                    f"⚠️ Automatic S&F check for `{world}` failed: the stored credentials were "
+                    f"rejected. This usually means the password changed.\n"
+                    f"Run `/gt_sf_login` to reconnect — hourly checks will keep failing until then."
+                )
+            return
+
+        characters = result.get("characters", [])
+        _record_check(guild_id, acc["discord_user_id"], world,
+                      f"✅ ok — {len(characters)} character(s)")
+
+        for char in characters:
+            if not char.get("guild"):
+                continue
+            for kind in ("attacking", "defending"):
+                battle = char.get(kind)
+                if battle:
+                    await self._maybe_alert(guild_id, world, kind, char, battle)
+
+    async def _maybe_alert(self, guild_id: str, world: str, kind: str,
+                           char: dict[str, Any], battle: dict[str, Any]) -> None:
+        """Posts an attack/defense alert, once per distinct battle."""
+        battle_date = str(battle.get("date", ""))
+        if _already_alerted(guild_id, world, kind, battle_date):
+            return  # already announced this exact battle
+
+        # Reuse the per-world channel/role configured via /gt_attack_setup.
+        conn = sqlite3.connect(DB_PATH)
+        row = conn.execute(
+            "SELECT channel_id, role_id FROM attack_config WHERE guild_id=? AND world_name=?",
+            (guild_id, world.lower())
+        ).fetchone()
+        conn.close()
+
+        if not row:
+            print(f"sf_auth: {world} has a {kind} battle but no /gt_attack_setup config — skipping alert")
+            return
+
+        channel_id, role_id = row
+        guild_obj = self.bot.get_guild(int(guild_id))
+        if not guild_obj:
+            return
+        channel = guild_obj.get_channel(int(channel_id))
+        if not channel:
+            return
+        role = guild_obj.get_role(int(role_id))
+
+        # Timezone-aware formatting using the guild's configured timezone.
+        when = format_battle_time(battle_date, guild_id)
+        opponent = battle.get("opponent") or f"guild #{battle.get('opponent_id')}"
+
+        if kind == "attacking":
+            title = "⚔️ Guild Attack Scheduled"
+            body = f"**{char['guild']}** is attacking **{opponent}**"
+            colour = discord.Color.dark_red()
+        else:
+            title = "🛡️ Incoming Attack!"
+            body = f"**{opponent}** is attacking **{char['guild']}**"
+            colour = discord.Color.orange()
+
+        embed = discord.Embed(title=title, description=body, color=colour)
+        embed.add_field(name="🕒 Time", value=when, inline=True)
+        embed.add_field(name="🌍 World", value=world.upper(), inline=True)
+        embed.set_footer(text="Detected automatically by hourly guild check")
+
+        try:
+            await channel.send(content=role.mention if role else None, embed=embed)
+            _mark_alerted(guild_id, world, kind, battle_date)
+        except discord.Forbidden:
+            print(f"sf_auth: missing permission to post {kind} alert in channel {channel_id}")
+
+    async def _dm_user(self, discord_user_id: str, message: str) -> None:
+        """Best-effort DM — a user with closed DMs shouldn't break the loop."""
+        try:
+            user = self.bot.get_user(int(discord_user_id)) or \
+                   await self.bot.fetch_user(int(discord_user_id))
+            if user:
+                await user.send(message)
+        except (discord.Forbidden, discord.HTTPException):
+            pass
