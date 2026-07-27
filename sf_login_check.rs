@@ -76,7 +76,23 @@ async fn try_sso_login(username: &str, password: &str, target_server: &str) {
     println!("✅ SSO login succeeded — found {} character session(s).", sessions.len());
 
     let mut found_target = false;
-    for mut session in sessions {
+    for (i, mut session) in sessions.into_iter().enumerate() {
+        // ------------------------------------------------------------------
+        // DEBUG STEP — print the RAW session before touching it further.
+        // We've confirmed SimpleSession/SSOCharacter/ServerLookup/SFAccount
+        // expose no public field or method for the server address. This
+        // prints the struct's Debug output instead, which (if the type
+        // derives Debug) shows its PRIVATE internal fields too — telling us
+        // definitively whether server data exists inside the struct at all,
+        // even if there's currently no public way to read it.
+        // If this line fails to compile ("SimpleSession doesn't implement
+        // Debug"), that itself is the answer: the data may still be there,
+        // but nothing — not even Debug — can surface it from outside the crate.
+        // ------------------------------------------------------------------
+        println!("\n--- RAW SESSION #{i} DEBUG DUMP ---");
+        println!("{session:#?}");
+        println!("--- END DUMP #{i} ---\n");
+
         // Per the README, sessions returned from login_sf_account() start
         // in a "logged out" state and need one command sent (e.g. Update)
         // before game_state() has real data.
