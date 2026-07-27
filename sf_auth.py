@@ -171,23 +171,97 @@ def decrypt_password(ciphertext: bytes) -> str:
 def init_sf_auth_tables() -> None:
     """Idempotent — safe to call on every startup."""
     conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
 
-    # One row per (guild, discord user, game world).
-    # password_enc is a Fernet BLOB — plaintext is NEVER written to this table.
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS sf_accounts (
-            guild_id        TEXT NOT NULL,
-            discord_user_id TEXT NOT NULL,
-            world_name      TEXT NOT NULL,
-            sf_username     TEXT NOT NULL,
-            password_enc    BLOB NOT NULL,
-            auto_checks     INTEGER NOT NULL DEFAULT 1,
-            last_check      TIMESTAMP,
-            last_status     TEXT,
-            created_at      TIMESTAMP NOT NULL,
-            PRIMARY KEY (guild_id, discord_user_id, world_name)
-        )
-    """)
+    # ------------------------------------------------------------------
+    # sf_accounts — ONE CHARACTER PER WORLD (per guild)
+    #
+    # Old schema keyed on (guild_id, discord_user_id, world_name), which let
+    # TWO different Discord users each register the SAME world_name with
+    # different S&F credentials — not what "one account per world" means.
+    # New schema keys on (guild_id, world_name) only: whoever runs
+    # /gt_sf_login for a world REPLACES any existing registration for that
+    # world, regardless of which Discord user owns it. This is a deliberate,
+    # user-requested behaviour change, not an accident — see _save_account().
+    #
+    # discord_user_id is KEPT as a plain column (who currently owns this
+    # world's registration, for /gt_sf_status and DM-on-failure) — it's just
+    # no longer part of the uniqueness key.
+    #
+    # MIGRATION: if the old 3-column PK schema exists, rebuild the table
+    # (SQLite can't ALTER a PRIMARY KEY in place) and DEDUPE — if two users
+    # had registered the same world, keep only the most recently created row
+    # and print exactly what was dropped, so nothing disappears silently.
+    # ------------------------------------------------------------------
+    existing_cols = {row[1] for row in c.execute("PRAGMA table_info(sf_accounts)").fetchall()}
+    if not existing_cols:
+        c.execute("""
+            CREATE TABLE sf_accounts (
+                guild_id        TEXT NOT NULL,
+                discord_user_id TEXT NOT NULL,
+                world_name      TEXT NOT NULL,
+                sf_username     TEXT NOT NULL,
+                password_enc    BLOB NOT NULL,
+                auto_checks     INTEGER NOT NULL DEFAULT 1,
+                last_check      TIMESTAMP,
+                last_status     TEXT,
+                created_at      TIMESTAMP NOT NULL,
+                PRIMARY KEY (guild_id, world_name)
+            )
+        """)
+    else:
+        pk_cols = [row[1] for row in c.execute("PRAGMA table_info(sf_accounts)").fetchall() if row[5] > 0]
+        if set(pk_cols) != {"guild_id", "world_name"}:
+            print("sf_auth: migrating sf_accounts to one-account-per-world schema...")
+
+            # Find and report any (guild, world) pairs registered by more
+            # than one user, BEFORE we drop anything.
+            dupes = c.execute("""
+                SELECT guild_id, world_name, COUNT(*) as n
+                FROM sf_accounts GROUP BY guild_id, world_name HAVING n > 1
+            """).fetchall()
+            for guild_id, world_name, n in dupes:
+                rows = c.execute(
+                    """SELECT discord_user_id, sf_username, created_at FROM sf_accounts
+                       WHERE guild_id=? AND world_name=? ORDER BY created_at DESC""",
+                    (guild_id, world_name)
+                ).fetchall()
+                keeper = rows[0]
+                print(f"sf_auth:   {world_name} (guild {guild_id}) had {n} registrations — "
+                      f"keeping user {keeper[0]}'s '{keeper[1]}' (most recent), "
+                      f"dropping: {[(r[0], r[1]) for r in rows[1:]]}")
+
+            c.execute("ALTER TABLE sf_accounts RENAME TO sf_accounts_old")
+            c.execute("""
+                CREATE TABLE sf_accounts (
+                    guild_id        TEXT NOT NULL,
+                    discord_user_id TEXT NOT NULL,
+                    world_name      TEXT NOT NULL,
+                    sf_username     TEXT NOT NULL,
+                    password_enc    BLOB NOT NULL,
+                    auto_checks     INTEGER NOT NULL DEFAULT 1,
+                    last_check      TIMESTAMP,
+                    last_status     TEXT,
+                    created_at      TIMESTAMP NOT NULL,
+                    PRIMARY KEY (guild_id, world_name)
+                )
+            """)
+            # Keep exactly one row per (guild_id, world_name): the one with
+            # the latest created_at. rowid tie-break keeps this deterministic
+            # if two rows somehow share a timestamp.
+            c.execute("""
+                INSERT INTO sf_accounts
+                SELECT guild_id, discord_user_id, world_name, sf_username, password_enc,
+                       auto_checks, last_check, last_status, created_at
+                FROM sf_accounts_old o
+                WHERE o.rowid = (
+                    SELECT o2.rowid FROM sf_accounts_old o2
+                    WHERE o2.guild_id = o.guild_id AND o2.world_name = o.world_name
+                    ORDER BY o2.created_at DESC, o2.rowid DESC LIMIT 1
+                )
+            """)
+            c.execute("DROP TABLE sf_accounts_old")
+            print("sf_auth: migration complete.")
 
     # Remembers which battles we've already announced, so the hourly loop
     # doesn't re-ping the same role about the same attack 24 times a day.
@@ -206,23 +280,41 @@ def init_sf_auth_tables() -> None:
 
 
 def _save_account(guild_id: int, discord_user_id: int, world_name: str,
-                  sf_username: str, password_plain: str) -> None:
-    """Encrypts, then stores. The plaintext argument is never persisted."""
-    password_enc = encrypt_password(password_plain)
+                  sf_username: str, password_plain: str) -> Optional[str]:
+    """Encrypts, then stores. The plaintext argument is never persisted.
+
+    ONE-ACCOUNT-PER-WORLD ENFORCEMENT: keyed on (guild_id, world_name) only,
+    so if a DIFFERENT Discord user already registered this world, this call
+    silently REPLACES their registration (INSERT OR REPLACE semantics via
+    ON CONFLICT). Returns the discord_user_id that previously owned this
+    world's slot, if any and if different from the caller — so the command
+    handler can warn the new registrant that they just took over someone
+    else's slot.
+    """
     conn = sqlite3.connect(DB_PATH)
+    existing = conn.execute(
+        "SELECT discord_user_id FROM sf_accounts WHERE guild_id=? AND world_name=?",
+        (str(guild_id), world_name.lower())
+    ).fetchone()
+    previous_owner = existing[0] if existing and existing[0] != str(discord_user_id) else None
+
+    password_enc = encrypt_password(password_plain)
     conn.execute(
         """INSERT INTO sf_accounts
            (guild_id, discord_user_id, world_name, sf_username, password_enc,
             auto_checks, last_check, last_status, created_at)
            VALUES (?, ?, ?, ?, ?, 1, NULL, NULL, ?)
-           ON CONFLICT(guild_id, discord_user_id, world_name) DO UPDATE SET
-               sf_username  = excluded.sf_username,
-               password_enc = excluded.password_enc""",
+           ON CONFLICT(guild_id, world_name) DO UPDATE SET
+               discord_user_id = excluded.discord_user_id,
+               sf_username     = excluded.sf_username,
+               password_enc    = excluded.password_enc,
+               created_at      = excluded.created_at""",
         (str(guild_id), str(discord_user_id), world_name.lower(), sf_username,
          password_enc, datetime.now(timezone.utc).isoformat())
     )
     conn.commit()
     conn.close()
+    return previous_owner
 
 
 def _delete_account(guild_id: int, discord_user_id: int, world_name: Optional[str]) -> int:
@@ -464,16 +556,24 @@ class SFLoginModal(discord.ui.Modal, title="Shakes & Fidget Login"):
             )
             return
 
-        _save_account(interaction.guild_id, self.target_user.id, server, username, password)
+        previous_owner_id = _save_account(interaction.guild_id, self.target_user.id, server, username, password)
 
         chars = result.get("characters", [])
         guild_names = sorted({c["guild"] for c in chars if c.get("guild")})
         summary = ", ".join(guild_names) if guild_names else "(no guild found)"
 
+        takeover_note = ""
+        if previous_owner_id:
+            takeover_note = (
+                f"\n⚠️ **{server}** was already registered by <@{previous_owner_id}> — "
+                f"that registration has been **replaced** by this one (one account per world)."
+            )
+
         await interaction.followup.send(
             f"✅ Login verified and stored **encrypted** for `{server}`.\n"
             f"Characters found: **{len(chars)}** · Guild(s): **{summary}**\n"
-            f"Hourly checks are **on** — use `/gt_sf_toggle_checks` to change that.",
+            f"Hourly checks are **on** — use `/gt_sf_toggle_checks` to change that."
+            f"{takeover_note}",
             ephemeral=True,
         )
 
@@ -690,12 +790,37 @@ class SFMonitor:
 
     async def _maybe_alert(self, guild_id: str, world: str, kind: str,
                            char: dict[str, Any], battle: dict[str, Any]) -> None:
-        """Posts an attack/defense alert, once per distinct battle."""
+        """Posts an attack/defense alert, once per distinct battle.
+
+        Channel routing: prefers the per-kind channel from
+        world_notify_config (/gt_sf_toggle) if configured; falls back to
+        attack_config's single channel (/gt_attack_setup) otherwise. The
+        ping role always comes from attack_config — /gt_sf_toggle doesn't
+        configure a separate role, it only routes channels + defense muting.
+
+        mute_defense: if set for this world, a defending battle is marked
+        as alerted WITHOUT actually sending anything — i.e. "acknowledge
+        and suppress", not "defer until unmuted". If you'd rather a later
+        /gt_sf_toggle unmute cause a backlog of suppressed alerts to fire,
+        that's a one-line change (skip the _mark_alerted call below instead).
+        """
         battle_date = str(battle.get("date", ""))
         if _already_alerted(guild_id, world, kind, battle_date):
             return  # already announced this exact battle
 
-        # Reuse the per-world channel/role configured via /gt_attack_setup.
+        # Import here (not at module top) to avoid a circular import at
+        # startup, since attack_alert.py doesn't need anything from sf_auth.py.
+        from attack_alert import get_notify_config
+
+        notify_cfg = get_notify_config(int(guild_id), world)
+
+        if kind == "defending" and notify_cfg and notify_cfg["mute_defense"]:
+            _mark_alerted(guild_id, world, kind, battle_date)  # suppressed, not deferred — see docstring
+            return
+
+        # Reuse the per-world role configured via /gt_attack_setup; prefer
+        # /gt_sf_toggle's per-kind channel if set, else fall back to
+        # attack_config's single channel.
         conn = sqlite3.connect(DB_PATH)
         row = conn.execute(
             "SELECT channel_id, role_id FROM attack_config WHERE guild_id=? AND world_name=?",
@@ -703,18 +828,27 @@ class SFMonitor:
         ).fetchone()
         conn.close()
 
-        if not row:
-            print(f"sf_auth: {world} has a {kind} battle but no /gt_attack_setup config — skipping alert")
+        fallback_channel_id, role_id = row if row else (None, None)
+
+        if notify_cfg and kind == "attacking" and notify_cfg["attack_channel_id"]:
+            channel_id = notify_cfg["attack_channel_id"]
+        elif notify_cfg and kind == "defending" and notify_cfg["defense_channel_id"]:
+            channel_id = notify_cfg["defense_channel_id"]
+        else:
+            channel_id = fallback_channel_id
+
+        if not channel_id:
+            print(f"sf_auth: {world} has a {kind} battle but no channel configured "
+                  f"(checked /gt_sf_toggle and /gt_attack_setup) — skipping alert")
             return
 
-        channel_id, role_id = row
         guild_obj = self.bot.get_guild(int(guild_id))
         if not guild_obj:
             return
         channel = guild_obj.get_channel(int(channel_id))
         if not channel:
             return
-        role = guild_obj.get_role(int(role_id))
+        role = guild_obj.get_role(int(role_id)) if role_id else None
 
         # Timezone-aware formatting using the guild's configured timezone.
         when = format_battle_time(battle_date, guild_id)
