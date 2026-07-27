@@ -1,41 +1,41 @@
 {
-  "gt_world_add": {
+  "wg_add_world": {
     "description": "Add world and assign a channel",
     "options": {
       "nazwa": "World name",
       "kanal": "Channel where this world's reports will be posted"
     }
   },
-  "gt_world_delete": {
+  "wg_delete_world": {
     "description": "Deleting world",
     "options": {
       "nazwa": "World name to delete"
     }
   },
-  "gt_worlds": {
+  "wg_worlds": {
     "description": "List of the worlds"
   },
-  "gt_member_add": {
+  "wg_add_member": {
     "description": "Assign players to a world",
     "options": {
       "swiat": "World name",
       "lista": "Player nicknames, separated by commas or new lines"
     }
   },
-  "gt_member_delete": {
+  "wg_delete_member": {
     "description": "Deleting player",
     "options": {
       "swiat": "World name",
       "nick": "Player nickname to remove"
     }
   },
-  "gt_members": {
+  "wg_member_list": {
     "description": "Member list",
     "options": {
       "swiat": "World name"
     }
   },
-  "report": {
+  "wg": {
     "description": "Upload the activity report",
     "options": {
       "swiat": "World name",
@@ -43,20 +43,20 @@
       "data": "Report date: DD.MM or DD.MM.YYYY (defaults to today if omitted)"
     }
   },
-  "gt_absent_list": {
+  "wg_absent_list": {
     "description": "List of absences",
     "options": {
       "swiat": "World name",
       "okres": "Time window to include (default: all time)"
     }
   },
-  "gt_report_delete": {
+  "wg_delete_raport": {
     "description": "Deleting last assigned report",
     "options": {
       "swiat": "World name"
     }
   },
-  "gt_absent_add": {
+  "wg_add_absent": {
     "description": "Add single absence to a member",
     "options": {
       "swiat": "World name",
@@ -64,30 +64,33 @@
       "data": "Report date: DD.MM or DD.MM.YYYY (defaults to today)"
     }
   },
-  "gt_reports_wipe": {
+  "wg_cleanup_reports": {
     "description": "Delete reports for one world — either by exact date or by age",
     "options": {
       "swiat": "World name",
       "data": "Exact battle date to delete (DD.MM[.YYYY]). Omit to delete reports older than 3 days."
     }
   },
-  "gt_absent_delete": {
+  "wg_delete_absent": {
     "description": "Delete single absence for a member",
     "options": {
       "swiat": "World name",
       "nick": "Player nickname"
     }
   },
-  "gt_wipe": {
+  "wg_clear_all": {
     "description": "Clearing every absence report (this server only)"
   },
-  "gt_setup": {
+  "test_scrapera": {
+    "description": "Test the bot's connection to SFDataHub"
+  },
+  "setup": {
     "description": "Run the one-time server configuration wizard (admin only)."
   },
-  "gt_setup_reset": {
-    "description": "Unlock configuration so /gt_setup can be run again (admin only)."
+  "setup_reset": {
+    "description": "Unlock configuration so /setup can be run again (admin only)."
   },
-  "gt_ranking_set": {
+  "wg_set_ranking": {
     "description": "Configure or disable the automatic weekly absence ranking for one world",
     "options": {
       "swiat": "World this schedule applies to",
@@ -97,44 +100,44 @@
       "minute": "Minute (only used if enabled)"
     }
   },
-  "gt_ranking_status": {
+  "wg_ranking_status": {
     "description": "Show the current automatic ranking schedule",
     "options": {
       "swiat": "Show only this world's schedule (omit to list every world)"
     }
   },
-  "gt_setup_settings": {
+  "settings": {
     "description": "Change a single server setting without resetting everything (admin only)."
   },
-  "gt_block_image": {
+  "wg_block_image": {
     "description": "Manually add an image to the scam blocklist",
     "options": {
       "image": "The image to block",
       "reason": "Why this image is being blocked (optional)"
     }
   },
-  "gt_blocklist_stats": {
+  "wg_blocklist_stats": {
     "description": "Show how many images are in the scam hash blocklist"
   },
-  "gt_events_setup": {
+  "sf_events_setup": {
     "description": "Set the channel where official game event webhooks arrive (admin only).",
     "options": {
       "channel": "The channel that receives official game news/event webhooks"
     }
   },
-  "gt_events_toggle": {
+  "sf_events_toggle": {
     "description": "Enable or disable the SF events tracking module (admin only).",
     "options": {
       "state": "True to enable, False to disable"
     }
   },
-  "gt_events_reload": {
+  "sf_events_reload": {
     "description": "Re-scan the events channel history and reload the event schedule (admin only)."
   },
   "events": {
     "description": "Show current and upcoming in-game events for this weekend."
   },
-  "gt_recruitment_panel": {
+  "recruitment_panel": {
     "description": "Post the guild recruitment application panel (admin only).",
     "options": {
       "channel": "Channel to post the recruitment panel in",
@@ -145,7 +148,7 @@
       "member_role_4": "Optional: additional rank given to accepted applicants"
     }
   },
-  "gt_attack_setup": {
+  "attack_setup": {
     "description": "Configure the alert channel and ping role for a world's attack notifications.",
     "options": {
       "world_name": "World name (e.g. eu20)",
@@ -159,5 +162,27 @@
       "world_name": "World name (e.g. eu20)",
       "time": "Attack time, e.g. 20:00 (omit for an immediate 'happening now' alert)"
     }
+  },
+  "gt_sf_login": {
+    "description": "Securely connect a Shakes & Fidget account for guild monitoring.",
+    "options": {
+      "user": "Admin only: register on behalf of another member (defaults to yourself)"
+    }
+  },
+  "gt_sf_logout": {
+    "description": "Delete your stored Shakes & Fidget credentials from the bot.",
+    "options": {
+      "world": "Only remove this world (omit to remove all of yours)"
+    }
+  },
+  "gt_sf_toggle_checks": {
+    "description": "Turn the hourly guild attack/defense check on or off for your account.",
+    "options": {
+      "state": "True to enable hourly checks, False to disable",
+      "world": "Apply to this world only (omit for all of your accounts)"
+    }
+  },
+  "gt_sf_status": {
+    "description": "Show your connected Shakes & Fidget accounts and their check status."
   }
 }
