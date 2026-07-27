@@ -591,7 +591,7 @@ class SFLoginModal(discord.ui.Modal, title="Shakes & Fidget Login"):
 
         await interaction.followup.send(
             f"✅ Login verified and stored **encrypted** for `{server}`.\n"
-            f"Characters found on this server: **{len(chars)}** · Guild(s): **{summary}**\n"
+            f"Guild found on this server: **{summary}**\n"
             f"Hourly checks are **on** — use `/gt_sf_toggle_checks` to change that."
             f"{unverified_note}{takeover_note}",
             ephemeral=True,
