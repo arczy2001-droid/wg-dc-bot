@@ -36,7 +36,7 @@ from recruitment import (
 )
 from attack_alert import (
     init_attack_alert_table,
-    attack_setup,
+    gt_attack_setup,
     attack,
 )
 from sf_auth import (
@@ -319,7 +319,7 @@ class MyBot(commands.Bot):
         self.tree.add_command(sf_events_reload)
         self.tree.add_command(events_command)
         self.tree.add_command(recruitment_panel)
-        self.tree.add_command(attack_setup)
+        self.tree.add_command(gt_attack_setup)
         self.tree.add_command(attack)
         self.tree.add_command(gt_sf_toggle)
         await register_persistent_views(self)  # re-attach buttons after restart

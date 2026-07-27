@@ -8,8 +8,8 @@ fast trigger that posts a themed embed and pings the right role for the
 right world. Two commands, one table.
 
 PERMISSION MODEL:
-    /attack_setup — requires Manage Server (consistent with other per-world
-                    setup commands like /wg_add_world in the main bot).
+    /gt_attack_setup — requires Manage Server (consistent with other per-world
+                    setup commands like /gt_world_add in the main bot).
     /attack       — requires "administrators or configured officer roles."
                     Rather than build a second, parallel officer-role system
                     just for this feature, this reuses the bot-admin role
@@ -22,13 +22,13 @@ INTEGRATION (in gildia_bot.py):
 
     from attack_alert import (
         init_attack_alert_table,
-        attack_setup,
+        gt_attack_setup,
         attack,
     )
 
     # in setup_hook, before tree.sync():
     init_attack_alert_table()
-    self.tree.add_command(attack_setup)
+    self.tree.add_command(gt_attack_setup)
     self.tree.add_command(attack)
 """
 
@@ -132,17 +132,17 @@ def _is_officer_or_admin(interaction: discord.Interaction) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# /attack_setup — admin-only config command
+# /gt_attack_setup — admin-only config command
 # ---------------------------------------------------------------------------
 
-@app_commands.command(name="attack_setup", description="Configure the alert channel and ping role for a world's attack notifications.")
+@app_commands.command(name="gt_attack_setup", description="Configure the alert channel and ping role for a world's attack notifications.")
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.describe(
     world_name="World name (e.g. eu20)",
     channel="Channel where attack alerts for this world will be posted",
     ping_role="Role to ping when an attack alert is triggered for this world",
 )
-async def attack_setup(
+async def gt_attack_setup(
     interaction: discord.Interaction,
     world_name: str,
     channel: discord.TextChannel,
@@ -156,12 +156,12 @@ async def attack_setup(
     )
 
 
-@attack_setup.error
-async def attack_setup_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+@gt_attack_setup.error
+async def gt_attack_setup_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("❌ You need **Manage Server** permission for this.", ephemeral=True)
     else:
-        print(f"attack_setup error: {error}")
+        print(f"gt_attack_setup error: {error}")
         await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
 
 
@@ -189,7 +189,7 @@ async def attack(interaction: discord.Interaction, world_name: str, time: Option
     if not config:
         await interaction.response.send_message(
             f"❌ No attack alert configuration found for **{world_name.upper()}**. "
-            f"An admin needs to run `/attack_setup` for this world first.",
+            f"An admin needs to run `/gt_attack_setup` for this world first.",
             ephemeral=True,
         )
         return
@@ -201,7 +201,7 @@ async def attack(interaction: discord.Interaction, world_name: str, time: Option
     if not channel:
         await interaction.response.send_message(
             f"❌ The configured channel for **{world_name.upper()}** no longer exists. "
-            f"Please run `/attack_setup` again.",
+            f"Please run `/gt_attack_setup` again.",
             ephemeral=True,
         )
         return
