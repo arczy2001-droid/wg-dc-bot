@@ -855,12 +855,12 @@ class SFMonitor:
         opponent = battle.get("opponent") or f"guild #{battle.get('opponent_id')}"
 
         if kind == "attacking":
-            title = "⚔️ Guild Attack Scheduled"
-            body = f"**{char['guild']}** is attacking **{opponent}**"
+            title = "⚔️ Guild ATTACK"
+            body = f"Join the attack!"
             colour = discord.Color.dark_red()
         else:
-            title = "🛡️ Incoming Attack!"
-            body = f"**{opponent}** is attacking **{char['guild']}**"
+            title = "🛡️ Incoming DEFENCE!"
+            body = f"Join the deffence"
             colour = discord.Color.orange()
 
         embed = discord.Embed(title=title, description=body, color=colour)
