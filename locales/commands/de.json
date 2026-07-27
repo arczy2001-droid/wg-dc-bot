@@ -119,25 +119,25 @@
   "wg_blocklist_stats": {
     "description": "Anzahl der Bilder in der Scam-Hash-Blockliste anzeigen"
   },
-  "gt_events_setup": {
+  "sf_events_setup": {
     "description": "Den Kanal festlegen, in dem offizielle Spiel-Event-Webhooks ankommen (nur Admin).",
     "options": {
       "channel": "Der Kanal, der offizielle Spiel-News/Event-Webhooks empfängt"
     }
   },
-  "gt_events_toggle": {
+  "sf_events_toggle": {
     "description": "Das SF-Event-Tracking-Modul aktivieren oder deaktivieren (nur Admin).",
     "options": {
       "state": "True zum Aktivieren, False zum Deaktivieren"
     }
   },
-  "gt_events_reload": {
+  "sf_events_reload": {
     "description": "Den Event-Kanal-Verlauf erneut scannen und den Zeitplan aktualisieren (nur Admin)."
   },
   "events": {
     "description": "Aktuelle und bevorstehende In-Game-Events für dieses Wochenende anzeigen."
   },
-  "gt_recruitment_panel": {
+  "recruitment_panel": {
     "description": "Das Gilden-Rekrutierungs-Bewerbungspanel veröffentlichen (nur Admin).",
     "options": {
       "channel": "Kanal, in dem das Rekrutierungspanel veröffentlicht wird",
@@ -148,7 +148,7 @@
       "member_role_4": "Optional: zusätzlicher Rang, der angenommenen Bewerbern vergeben wird"
     }
   },
-  "gt_attack_setup": {
+  "attack_setup": {
     "description": "Alarmkanal und Ping-Rolle für Angriffsbenachrichtigungen einer Welt konfigurieren.",
     "options": {
       "world_name": "Weltname (z.B. eu20)",
@@ -163,26 +163,13 @@
       "time": "Angriffszeit, z.B. 20:00 (weglassen für einen sofortigen 'jetzt'-Alarm)"
     }
   },
-  "gt_sf_login": {
-    "description": "Ein Shakes & Fidget Konto sicher für die Gildenüberwachung verbinden.",
+  "gt_sf_toggle": {
+    "description": "Angriffs-/Verteidigungs-Alarmkanäle pro Welt konfigurieren oder aktuelle Einstellungen anzeigen.",
     "options": {
-      "user": "Nur Admin: für ein anderes Mitglied registrieren (Standard: du selbst)"
+      "world_name": "Zu konfigurierende Welt (aus der Liste wählen)",
+      "attack_channel": "Kanal für Angriffsalarme (leer lassen, um aktuellen beizubehalten)",
+      "defense_channel": "Kanal für Verteidigungsalarme (leer lassen, um aktuellen beizubehalten)",
+      "mute_defense": "Verteidigungsalarme vollständig unterdrücken (True/False)"
     }
-  },
-  "gt_sf_logout": {
-    "description": "Gespeicherte Shakes & Fidget Zugangsdaten aus dem Bot löschen.",
-    "options": {
-      "world": "Nur diese Welt entfernen (weglassen für alle deine)"
-    }
-  },
-  "gt_sf_toggle_checks": {
-    "description": "Stündliche Gildenangriff-/Verteidigungsprüfung für dein Konto ein-/ausschalten.",
-    "options": {
-      "state": "True zum Aktivieren, False zum Deaktivieren",
-      "world": "Nur auf diese Welt anwenden (weglassen für alle Konten)"
-    }
-  },
-  "gt_sf_status": {
-    "description": "Deine verbundenen Shakes & Fidget Konten und ihren Prüfstatus anzeigen."
   }
 }
