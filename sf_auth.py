@@ -558,9 +558,29 @@ class SFLoginModal(discord.ui.Modal, title="Shakes & Fidget Login"):
 
         previous_owner_id = _save_account(interaction.guild_id, self.target_user.id, server, username, password)
 
-        chars = result.get("characters", [])
+        # Filter to only the character(s) whose VERIFIED server matches what
+        # was actually registered — same logic as the hourly check in
+        # SFMonitor._check_account. Without this, an SSO account with many
+        # characters would summarize every guild it has anywhere, not just
+        # the one on `server`, which is misleading right at the point of
+        # registration (this exact bug is what caused cross-world alert
+        # mislabeling before the server_url() fix).
+        all_chars = result.get("characters", [])
+        chars = [c for c in all_chars if c.get("server", "").lower() == server.lower()]
+
         guild_names = sorted({c["guild"] for c in chars if c.get("guild")})
         summary = ", ".join(guild_names) if guild_names else "(no guild found)"
+
+        unverified_note = ""
+        if not chars and all_chars:
+            # The login succeeded and returned characters, but none carried
+            # a verified match for THIS server — most likely an old probe
+            # binary that hasn't been rebuilt with server_url() support yet.
+            unverified_note = (
+                f"\n⚠️ The login succeeded but no character could be verified as belonging to "
+                f"`{server}` specifically. If this persists, make sure `sf_probe` has been rebuilt "
+                f"with `cargo build --release --bin sf_probe`."
+            )
 
         takeover_note = ""
         if previous_owner_id:
@@ -571,9 +591,9 @@ class SFLoginModal(discord.ui.Modal, title="Shakes & Fidget Login"):
 
         await interaction.followup.send(
             f"✅ Login verified and stored **encrypted** for `{server}`.\n"
-            f"Characters found: **{len(chars)}** · Guild(s): **{summary}**\n"
+            f"Characters found on this server: **{len(chars)}** · Guild(s): **{summary}**\n"
             f"Hourly checks are **on** — use `/gt_sf_toggle_checks` to change that."
-            f"{takeover_note}",
+            f"{unverified_note}{takeover_note}",
             ephemeral=True,
         )
 
