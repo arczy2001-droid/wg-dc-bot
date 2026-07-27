@@ -159,5 +159,36 @@
       "world_name": "Nazwa świata (np. eu20)",
       "time": "Godzina ataku, np. 20:00 (pomiń dla natychmiastowego alertu 'teraz')"
     }
+  },
+  "gt_sf_toggle": {
+    "description": "Skonfiguruj kanały alertów ataku/obrony dla świata lub sprawdź aktualne ustawienia.",
+    "options": {
+      "world_name": "Świat do skonfigurowania (wybierz z listy)",
+      "attack_channel": "Kanał dla alertów ataku (pozostaw puste, aby zachować obecny)",
+      "defense_channel": "Kanał dla alertów obrony (pozostaw puste, aby zachować obecny)",
+      "mute_defense": "Wycisz alerty obrony całkowicie (True/False)"
+    }
+  },
+  "gt_sf_login": {
+    "description": "Bezpiecznie połącz konto Shakes & Fidget do monitorowania gildii.",
+    "options": {
+      "user": "Tylko admin: zarejestruj w imieniu innego członka (domyślnie: ty)"
+    }
+  },
+  "gt_sf_logout": {
+    "description": "Usuń zapisane dane logowania Shakes & Fidget z bota.",
+    "options": {
+      "world": "Usuń tylko ten świat (pomiń, aby usunąć wszystkie twoje)"
+    }
+  },
+  "gt_sf_toggle_checks": {
+    "description": "Włącz lub wyłącz cogodzinne sprawdzanie ataku/obrony gildii dla twojego konta.",
+    "options": {
+      "state": "True, aby włączyć cogodzinne sprawdzanie, False, aby wyłączyć",
+      "world": "Zastosuj tylko do tego świata (pomiń dla wszystkich twoich kont)"
+    }
+  },
+  "gt_sf_status": {
+    "description": "Pokaż swoje połączone konta Shakes & Fidget i status sprawdzania."
   }
 }

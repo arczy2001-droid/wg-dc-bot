@@ -159,5 +159,36 @@
       "world_name": "Weltname (z.B. eu20)",
       "time": "Angriffszeit, z.B. 20:00 (weglassen für einen sofortigen 'jetzt'-Alarm)"
     }
+  },
+  "gt_sf_toggle": {
+    "description": "Angriffs-/Verteidigungs-Alarmkanäle pro Welt konfigurieren oder aktuelle Einstellungen anzeigen.",
+    "options": {
+      "world_name": "Zu konfigurierende Welt (aus der Liste wählen)",
+      "attack_channel": "Kanal für Angriffsalarme (leer lassen, um aktuellen beizubehalten)",
+      "defense_channel": "Kanal für Verteidigungsalarme (leer lassen, um aktuellen beizubehalten)",
+      "mute_defense": "Verteidigungsalarme vollständig unterdrücken (True/False)"
+    }
+  },
+  "gt_sf_login": {
+    "description": "Ein Shakes & Fidget-Konto sicher für die Gilden-Überwachung verbinden.",
+    "options": {
+      "user": "Nur Admin: im Namen eines anderen Mitglieds registrieren (Standard: du selbst)"
+    }
+  },
+  "gt_sf_logout": {
+    "description": "Deine gespeicherten Shakes & Fidget-Zugangsdaten aus dem Bot löschen.",
+    "options": {
+      "world": "Nur diese Welt entfernen (weglassen, um alle deine zu entfernen)"
+    }
+  },
+  "gt_sf_toggle_checks": {
+    "description": "Die stündliche Angriffs-/Verteidigungsprüfung für dein Konto ein- oder ausschalten.",
+    "options": {
+      "state": "True zum Aktivieren der stündlichen Prüfungen, False zum Deaktivieren",
+      "world": "Nur auf diese Welt anwenden (weglassen für alle deine Konten)"
+    }
+  },
+  "gt_sf_status": {
+    "description": "Deine verbundenen Shakes & Fidget-Konten und deren Prüfstatus anzeigen."
   }
 }

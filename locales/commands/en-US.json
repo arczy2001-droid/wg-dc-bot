@@ -159,5 +159,36 @@
       "world_name": "World name (e.g. eu20)",
       "time": "Attack time, e.g. 20:00 (omit for an immediate 'happening now' alert)"
     }
+  },
+  "gt_sf_toggle": {
+    "description": "Configure per-world attack/defense alert channels, or view current settings.",
+    "options": {
+      "world_name": "World to configure (pick from the list)",
+      "attack_channel": "Channel for attack alerts (leave unset to keep current)",
+      "defense_channel": "Channel for defense alerts (leave unset to keep current)",
+      "mute_defense": "Suppress defense alerts entirely (True/False)"
+    }
+  },
+  "gt_sf_login": {
+    "description": "Securely connect a Shakes & Fidget account for guild monitoring.",
+    "options": {
+      "user": "Admin only: register on behalf of another member (defaults to yourself)"
+    }
+  },
+  "gt_sf_logout": {
+    "description": "Delete your stored Shakes & Fidget credentials from the bot.",
+    "options": {
+      "world": "Only remove this world (omit to remove all of yours)"
+    }
+  },
+  "gt_sf_toggle_checks": {
+    "description": "Turn the hourly guild attack/defense check on or off for your account.",
+    "options": {
+      "state": "True to enable hourly checks, False to disable",
+      "world": "Apply to this world only (omit for all of your accounts)"
+    }
+  },
+  "gt_sf_status": {
+    "description": "Show your connected Shakes & Fidget accounts and their check status."
   }
 }
