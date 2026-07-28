@@ -39,6 +39,7 @@ import discord
 from discord import app_commands
 
 from i18n import translator
+from world_registry import WorldTransformer, registered_world_autocomplete
 
 DB_PATH = "gildia.db"
 
@@ -112,19 +113,14 @@ def _save_world_config(guild_id: int, world_name: str, channel_id: int, role_id:
 # ---------------------------------------------------------------------------
 # Shared helpers — used by /gt_attack_setup below and by sf_auth.py's
 # SFMonitor (which imports get_notify_config directly).
+#
+# NOTE: world existence checks and world_name autocomplete used to be
+# defined locally here, but were never actually called (world_exists was
+# dead code) and duplicated logic that now lives centrally in
+# world_registry.py (world_exists / registered_world_autocomplete) so
+# main.py can share the exact same behavior instead of every file
+# reimplementing its own "worlds registered on this guild" query.
 # ---------------------------------------------------------------------------
-
-def _world_exists(guild_id: int, world_name: str) -> bool:
-    """Validates against `swiaty`, the bot's canonical registered-worlds
-    table (populated by /gt_world_add) — the same source /gt_absent_list
-    etc. already validate world names against."""
-    conn = sqlite3.connect(DB_PATH)
-    row = conn.execute(
-        "SELECT 1 FROM swiaty WHERE guild_id=? AND nazwa=?", (str(guild_id), world_name.lower())
-    ).fetchone()
-    conn.close()
-    return row is not None
-
 
 def get_notify_config(guild_id: int, world_name: str) -> Optional[dict]:
     """Public — sf_auth.py's SFMonitor calls this to route alerts."""
@@ -183,24 +179,6 @@ def _upsert_notify_config(guild_id: int, world_name: str, *,
     return {"attack_channel_id": merged_attack, "defense_channel_id": merged_defense, "mute_defense": bool(merged_mute)}
 
 
-async def _world_name_autocomplete(interaction: discord.Interaction, current: str):
-    """Populates the world_name dropdown from `swiaty` (configured worlds
-    for this server), filtered by whatever the user has typed so far.
-
-    NOTE: Discord's autocomplete is a SUGGESTION list, not a hard constraint
-    — a user can still type an arbitrary string and submit it. That's why
-    the command handler below validates with _world_exists() regardless of
-    what this function offered.
-    """
-    conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute(
-        "SELECT nazwa FROM swiaty WHERE guild_id=? AND nazwa LIKE ? ORDER BY nazwa LIMIT 25",
-        (str(interaction.guild_id), f"%{current.lower()}%")
-    ).fetchall()
-    conn.close()
-    return [app_commands.Choice(name=r[0], value=r[0]) for r in rows]
-
-
 # ---------------------------------------------------------------------------
 # /gt_attack_setup — admin-only config command
 # (mute_defense merged in here from the removed /gt_sf_toggle command;
@@ -210,7 +188,7 @@ async def _world_name_autocomplete(interaction: discord.Interaction, current: st
 
 @app_commands.command(name="gt_attack_setup", description="Configure the alert channel and ping role for a world's attack notifications.")
 @app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.autocomplete(world_name=_world_name_autocomplete)
+@app_commands.autocomplete(world_name=registered_world_autocomplete)
 @app_commands.describe(
     world_name="World name (e.g. eu20)",
     channel="Channel where attack alerts for this world will be posted",
@@ -219,7 +197,7 @@ async def _world_name_autocomplete(interaction: discord.Interaction, current: st
 )
 async def gt_attack_setup(
     interaction: discord.Interaction,
-    world_name: str,
+    world_name: app_commands.Transform[str, WorldTransformer],
     channel: discord.TextChannel,
     ping_role: discord.Role,
     mute_defense: Optional[bool] = None,
