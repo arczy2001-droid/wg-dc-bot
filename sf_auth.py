@@ -618,7 +618,7 @@ class SFLoginModal(discord.ui.Modal, title="Shakes & Fidget Login"):
     password = discord.ui.TextInput(
         label="S&F Password",
         style=discord.TextStyle.short,  # Discord's only single-line style — NOT a masked/password style, see class docstring
-        placeholder="Not masked by Discord — only you can see this modal, but the text itself is plain",
+        placeholder="Only you can see this modal, password is encrypted",
         max_length=128,
         required=True,
     )
