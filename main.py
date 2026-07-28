@@ -43,6 +43,14 @@ from sf_auth import (
     gt_sf_login, gt_sf_logout, gt_sf_toggle_checks, gt_sf_status,
     SFMonitor,
 )
+from world_registry import (
+    migrate_world_identifiers,
+    resolve_server_domain,
+    WorldResolutionError,
+    WorldTransformer,
+    world_alias_autocomplete,
+    registered_world_autocomplete,
+)
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 OCR_API_KEY = os.getenv("OCR_SPACE_API_KEY")
 DB_PATH = "gildia.db"
@@ -309,6 +317,10 @@ class MyBot(commands.Bot):
         init_sf_events_tables()
         init_recruitment_tables()
         init_attack_alert_table()
+        init_sf_auth_tables()
+        # Must run AFTER every other init_*_table() above, so every table
+        # in world_registry's migration manifest already exists.
+        migrate_world_identifiers()
         self.tree.add_command(setup_command)
         self.tree.add_command(setup_reset_command)
         self.tree.add_command(settings_command)
@@ -322,7 +334,6 @@ class MyBot(commands.Bot):
         await self.tree.set_translator(CommandTranslator())  # must be set before sync()
         self.czyszczenie.start()
         self.niedzielny_ranking.start()
-        init_sf_auth_tables()
         for cmd in (gt_sf_login, gt_sf_logout, gt_sf_toggle_checks, gt_sf_status):
             self.tree.add_command(cmd)
         self.sf_monitor = SFMonitor(self)
@@ -385,7 +396,17 @@ bot = MyBot()
 #    Globalny handler błędów komend (np. brak uprawnień)
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.MissingPermissions):
+    # Unwrap in case discord.py's Transformer machinery wrapped our error
+    # (e.g. as TransformerError) rather than letting it propagate as-is.
+    root = error
+    seen = set()
+    while getattr(root, "original", None) is not None and id(root) not in seen:
+        seen.add(id(root))
+        root = root.original
+
+    if isinstance(root, WorldResolutionError):
+        msg = str(root)
+    elif isinstance(error, app_commands.MissingPermissions):
         msg = "❌ You need the **Manage Server** permission to use this command."
     elif isinstance(error, app_commands.CheckFailure):
         msg = "❌ You don't have permission to use this command here."
@@ -420,8 +441,9 @@ async def sprawdz_pozwolenie(interaction: discord.Interaction) -> bool:
 
 #    Komendy
 @bot.tree.command(name="gt_world_add", description="Add world and assign a channel")
+@app_commands.autocomplete(nazwa=world_alias_autocomplete)
 @app_commands.checks.has_permissions(manage_guild=True)
-async def wg_add_world(interaction: discord.Interaction, nazwa: str, kanal: discord.TextChannel):
+async def wg_add_world(interaction: discord.Interaction, nazwa: app_commands.Transform[str, WorldTransformer], kanal: discord.TextChannel):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     conn.cursor().execute(
@@ -434,8 +456,9 @@ async def wg_add_world(interaction: discord.Interaction, nazwa: str, kanal: disc
     )
 
 @bot.tree.command(name="gt_world_delete", description="Deleting world")
+@app_commands.autocomplete(nazwa=registered_world_autocomplete)
 @app_commands.checks.has_permissions(manage_guild=True)
-async def wg_delete_world(interaction: discord.Interaction, nazwa: str):
+async def wg_delete_world(interaction: discord.Interaction, nazwa: app_commands.Transform[str, WorldTransformer]):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     gid = str(interaction.guild_id)
@@ -464,8 +487,9 @@ async def wg_worlds(interaction: discord.Interaction):
     await interaction.response.send_message(f"{header}\n{txt}")
 
 @bot.tree.command(name="gt_member_add", description="Assign players to a world")
+@app_commands.autocomplete(swiat=registered_world_autocomplete)
 @app_commands.checks.has_permissions(manage_guild=True)
-async def wg_add_member(interaction: discord.Interaction, swiat: str, lista: str):
+async def wg_add_member(interaction: discord.Interaction, swiat: app_commands.Transform[str, WorldTransformer], lista: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     gid = str(interaction.guild_id)
@@ -475,8 +499,9 @@ async def wg_add_member(interaction: discord.Interaction, swiat: str, lista: str
     await interaction.response.send_message(translator.get_text(interaction.guild_id, "members.added"))
 
 @bot.tree.command(name="gt_member_delete", description="Deleting player")
+@app_commands.autocomplete(swiat=registered_world_autocomplete)
 @app_commands.checks.has_permissions(manage_guild=True)
-async def wg_delete_member(interaction: discord.Interaction, swiat: str, nick: str):
+async def wg_delete_member(interaction: discord.Interaction, swiat: app_commands.Transform[str, WorldTransformer], nick: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     conn.cursor().execute(
@@ -489,7 +514,8 @@ async def wg_delete_member(interaction: discord.Interaction, swiat: str, nick: s
     )
 
 @bot.tree.command(name="gt_members", description="Member list:")
-async def wg_member_list(interaction: discord.Interaction, swiat: str):
+@app_commands.autocomplete(swiat=registered_world_autocomplete)
+async def wg_member_list(interaction: discord.Interaction, swiat: app_commands.Transform[str, WorldTransformer]):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     cursor = conn.cursor()
@@ -568,12 +594,13 @@ def _parse_report_date(data_str: Optional[str]) -> tuple[Optional[str], Optional
 
 
 @bot.tree.command(name="report", description="Upload the activity report")
+@app_commands.autocomplete(swiat=registered_world_autocomplete)
 @app_commands.describe(
     swiat="World name",
     screen="Screenshot of the battle/activity list",
     data="Report date: DD.MM or DD.MM.YYYY (defaults to today if omitted)"
 )
-async def wg(interaction: discord.Interaction, swiat: str, screen: discord.Attachment, data: Optional[str] = None):
+async def wg(interaction: discord.Interaction, swiat: app_commands.Transform[str, WorldTransformer], screen: discord.Attachment, data: Optional[str] = None):
     if not await sprawdz_pozwolenie(interaction): return
     await interaction.response.defer()
 
@@ -657,6 +684,7 @@ OKRES_CHOICES = [
 ]
 
 @bot.tree.command(name="gt_absent_list", description="List of absences")
+@app_commands.autocomplete(swiat=registered_world_autocomplete)
 @app_commands.choices(okres=OKRES_CHOICES)
 @app_commands.describe(
     swiat="World name",
@@ -665,7 +693,7 @@ OKRES_CHOICES = [
     do="Custom range end: DD.MM or DD.MM.YYYY (e.g. 17.07)"
 )
 async def wg_absent_list(
-    interaction: discord.Interaction, swiat: str,
+    interaction: discord.Interaction, swiat: app_commands.Transform[str, WorldTransformer],
     okres: Optional[app_commands.Choice[str]] = None,
     od: Optional[str] = None, do: Optional[str] = None
 ):
@@ -753,8 +781,9 @@ async def wg_absent_list(
     await interaction.followup.send(f"{naglowek} *(⏱ {okres_label})*\n{txt}")
 
 @bot.tree.command(name="gt_report_delete", description="Deleting last assigned report")
+@app_commands.autocomplete(swiat=registered_world_autocomplete)
 @app_commands.checks.has_permissions(manage_guild=True)
-async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
+async def wg_delete_raport(interaction: discord.Interaction, swiat: app_commands.Transform[str, WorldTransformer]):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     gid = str(interaction.guild_id)
@@ -779,12 +808,13 @@ async def wg_delete_raport(interaction: discord.Interaction, swiat: str):
     conn.close()
 
 @bot.tree.command(name="gt_absent_add", description="Add single absence to a member")
+@app_commands.autocomplete(swiat=registered_world_autocomplete)
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.describe(
     swiat="World name", nick="Player nickname",
     data="Report date: DD.MM or DD.MM.YYYY (defaults to today)"
 )
-async def wg_add_absent(interaction: discord.Interaction, swiat: str, nick: str, data: Optional[str] = None):
+async def wg_add_absent(interaction: discord.Interaction, swiat: app_commands.Transform[str, WorldTransformer], nick: str, data: Optional[str] = None):
     if not await sprawdz_pozwolenie(interaction): return
     data_raportu, display_or_error = _parse_report_date(data)
     if data_raportu is None:
@@ -802,8 +832,9 @@ async def wg_add_absent(interaction: discord.Interaction, swiat: str, nick: str,
     )
 
 @bot.tree.command(name="gt_absent_delete", description="Delete single absence for a member")
+@app_commands.autocomplete(swiat=registered_world_autocomplete)
 @app_commands.checks.has_permissions(manage_guild=True)
-async def wg_delete_absent(interaction: discord.Interaction, swiat: str, nick: str):
+async def wg_delete_absent(interaction: discord.Interaction, swiat: app_commands.Transform[str, WorldTransformer], nick: str):
     if not await sprawdz_pozwolenie(interaction): return
     conn = sqlite3.connect("gildia.db")
     conn.cursor().execute(
@@ -830,12 +861,13 @@ async def wg_clear_all(interaction: discord.Interaction):
     await interaction.response.send_message(translator.get_text(interaction.guild_id, "reports.all_cleared"))
 
 @bot.tree.command(name="gt_reports_wipe", description="Delete reports for one world — either by exact date or by age")
+@app_commands.autocomplete(swiat=registered_world_autocomplete)
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.describe(
     swiat="World name",
     data="Exact battle date to delete (DD.MM[.YYYY]). Omit to delete reports older than 3 days."
 )
-async def wg_cleanup_reports(interaction: discord.Interaction, swiat: str, data: Optional[str] = None):
+async def wg_cleanup_reports(interaction: discord.Interaction, swiat: app_commands.Transform[str, WorldTransformer], data: Optional[str] = None):
     if not await sprawdz_pozwolenie(interaction): return
     gid = str(interaction.guild_id)
     swiat_lower = swiat.lower()
@@ -936,6 +968,7 @@ WEEKDAY_CHOICES = [
 WEEKDAY_NAMES = {c.value: c.name for c in WEEKDAY_CHOICES}
 
 @bot.tree.command(name="gt_ranking_set", description="Configure or disable the automatic weekly absence ranking for one world")
+@app_commands.autocomplete(swiat=registered_world_autocomplete)
 @app_commands.choices(weekday=WEEKDAY_CHOICES)
 @app_commands.describe(
     swiat="World this schedule applies to",
@@ -946,7 +979,7 @@ WEEKDAY_NAMES = {c.value: c.name for c in WEEKDAY_CHOICES}
 )
 async def wg_set_ranking(
     interaction: discord.Interaction,
-    swiat: str,
+    swiat: app_commands.Transform[str, WorldTransformer],
     enabled: bool,
     weekday: Optional[app_commands.Choice[int]] = None,
     hour: Optional[app_commands.Range[int, 0, 23]] = None,
@@ -1001,8 +1034,9 @@ async def wg_set_ranking(
         await interaction.response.send_message(f"🔕 Automatic weekly ranking disabled for **{swiat.upper()}**.")
 
 @bot.tree.command(name="gt_ranking_status", description="Show the current automatic ranking schedule")
+@app_commands.autocomplete(swiat=registered_world_autocomplete)
 @app_commands.describe(swiat="Show only this world's schedule (omit to list every world)")
-async def wg_ranking_status(interaction: discord.Interaction, swiat: Optional[str] = None):
+async def wg_ranking_status(interaction: discord.Interaction, swiat: Optional[app_commands.Transform[str, WorldTransformer]] = None):
     if not await sprawdz_pozwolenie(interaction): return
     gid = str(interaction.guild_id)
     conn = sqlite3.connect("gildia.db")
