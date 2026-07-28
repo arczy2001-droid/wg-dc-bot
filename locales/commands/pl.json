@@ -47,7 +47,9 @@
     "description": "Pokaż ranking nieobecności (7d / 14d / 31d / cały czas)",
     "options": {
       "swiat": "Nazwa świata",
-      "okres": "Zakres czasu do uwzględnienia: 7d / 14d / 31d / cały czas (domyślnie: cały czas)"
+      "okres": "Zakres czasu do uwzględnienia (domyślnie: cały czas, ignorowane, jeśli ustawiono 'od' lub 'do')",
+      "od": "Początek własnego zakresu: DD.MM lub DD.MM.RRRR (np. 10.07)",
+      "do": "Koniec własnego zakresu: DD.MM lub DD.MM.RRRR (np. 17.07)"
     }
   },
   "gt_report_delete": {
@@ -150,23 +152,8 @@
     "options": {
       "world_name": "Nazwa świata (np. eu20)",
       "channel": "Kanał, na którym będą publikowane alerty ataku dla tego świata",
-      "ping_role": "Rola oznaczana przy wywołaniu alertu ataku dla tego świata"
-    }
-  },
-  "attack": {
-    "description": "Wywołaj alert ataku/najazdu",
-    "options": {
-      "world_name": "Nazwa świata (np. eu20)",
-      "time": "Godzina ataku, np. 20:00 (pomiń dla natychmiastowego alertu 'teraz')"
-    }
-  },
-  "gt_sf_toggle": {
-    "description": "Skonfiguruj kanały alertów ataku/obrony dla świata lub sprawdź aktualne ustawienia.",
-    "options": {
-      "world_name": "Świat do skonfigurowania (wybierz z listy)",
-      "attack_channel": "Kanał dla alertów ataku (pozostaw puste, aby zachować obecny)",
-      "defense_channel": "Kanał dla alertów obrony (pozostaw puste, aby zachować obecny)",
-      "mute_defense": "Wycisz alerty obrony całkowicie (True/False)"
+      "ping_role": "Rola oznaczana przy wywołaniu alertu ataku dla tego świata",
+      "mute_defense": "Wycisz automatyczne pingi alertów obrony dla tego świata (pozostaw puste, aby zachować obecne ustawienie)"
     }
   },
   "gt_sf_login": {
