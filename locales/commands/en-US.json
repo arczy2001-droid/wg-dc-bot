@@ -147,15 +147,6 @@
       "member_role_4": "Optional: additional rank given to accepted applicants"
     }
   },
-  "gt_attack_setup": {
-    "description": "Set alert channel + ping role per world",
-    "options": {
-      "world_name": "World name (e.g. eu20)",
-      "channel": "Channel where attack alerts for this world will be posted",
-      "ping_role": "Role to ping when an attack alert is triggered for this world",
-      "mute_defense": "Suppress automated defense-alert pings for this world (leave unset to keep current)"
-    }
-  },
   "gt_sf_login": {
     "description": "Securely connect a Shakes & Fidget account for guild monitoring.",
     "options": {
@@ -177,5 +168,11 @@
   },
   "gt_sf_status": {
     "description": "Show your connected Shakes & Fidget accounts and their check status."
+  },
+  "gt_alerts_panel": {
+    "description": "Post the attack-alert config panel for one world (channel, ping role, defense mute).",
+    "options": {
+      "world_name": "World this alert config applies to (e.g. eu20)"
+    }
   }
 }
