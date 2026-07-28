@@ -497,14 +497,99 @@ async def run_probe(server: str, username: str, password: str) -> dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
-# LOGIN — Modal-based (see design note #1 at the top of this file)
+# LOGIN — disclaimer confirmation, then modal (see design note #1 at the
+# top of this file for why the modal exists at all)
 # ---------------------------------------------------------------------------
+
+class SFLoginDisclaimerView(discord.ui.View):
+    """Ephemeral, un-editable legal notice shown BEFORE SFLoginModal opens.
+
+    Unlike a TextInput default value (which the user could technically type
+    over), this is a real embed — nothing about it can be altered by the
+    person reading it. Only interaction.response.send_modal() can open a
+    modal, and that call must be the FIRST response to an interaction, which
+    is exactly why this has to be a separate button click rather than
+    something shown inside the modal itself: the button's own interaction
+    is what "spends" the response slot that opens the modal.
+    """
+
+    def __init__(self, invoker_id: int, target: discord.Member):
+        super().__init__(timeout=120)
+        self.invoker_id = invoker_id
+        self.target = target
+        self.message: Optional[discord.InteractionMessage] = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # The message is ephemeral (only invoker_id can even see it), but
+        # belt-and-suspenders in case Discord ever changes that guarantee.
+        if interaction.user.id != self.invoker_id:
+            await interaction.response.send_message(
+                "❌ Only the person who ran this command can use this button.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(
+                    content="⌛ This confirmation expired. Run `/gt_sf_login` again to continue.",
+                    view=self,
+                )
+            except discord.HTTPException:
+                pass  # message may already be gone (e.g. channel deleted) — nothing to do
+
+    @discord.ui.button(label="Continue", style=discord.ButtonStyle.danger)
+    async def continue_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        await interaction.response.send_modal(SFLoginModal(self.target))
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(content="Cancelled — no account was connected.", embed=None, view=self)
+
+
+def _build_sf_login_disclaimer_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="⚠️ Before you connect your account",
+        description=(
+            "1. In the event of a data breach or compromised accounts, there will be "
+            "absolutely no compensation from Playa Games.\n"
+            "2. The bot has no affiliation whatsoever with Playa Games.\n"
+            "3. The bot is in no way endorsed by Playa Games."
+        ),
+        color=discord.Color.red(),
+    )
+    return embed
+
 
 class SFLoginModal(discord.ui.Modal, title="Shakes & Fidget Login"):
     """Modal input is visible ONLY to the user who opened it.
 
     This is the whole reason we don't take the password as a slash-command
     parameter — those are rendered in-channel alongside the invocation.
+
+    The legal disclaimer is no longer a field on this modal — it's shown as
+    a proper ephemeral embed with a "Continue" button BEFORE this modal is
+    opened (see SFLoginDisclaimerView / gt_sf_login below). That gives an
+    unambiguous, un-editable notice, instead of a TextInput default value
+    the user could technically type over.
+
+    ⚠️ PASSWORD MASKING — READ BEFORE ASSUMING THIS IS SECURE INPUT:
+    Discord's TextInput component has exactly two styles, `short` (one line)
+    and `paragraph` (multi-line) — there is no "password"/masked style in
+    Discord's API, for any bot, in any client. The `password` field below is
+    NOT obscured with bullets/asterisks; it renders as plain text while the
+    user types. This is a platform limitation, not something fixable from
+    this code. The actual protection here is narrower than "hidden input":
+    only the user who opened the modal can see it at all (not the channel),
+    and the value is Fernet-encrypted before it ever touches disk — but
+    anyone who can see that user's own screen while they type can read it.
     """
 
     server = discord.ui.TextInput(
@@ -520,7 +605,8 @@ class SFLoginModal(discord.ui.Modal, title="Shakes & Fidget Login"):
     )
     password = discord.ui.TextInput(
         label="S&F Password",
-        placeholder="Only ever visible to you; stored encrypted",
+        style=discord.TextStyle.short,  # Discord's only single-line style — NOT a masked/password style, see class docstring
+        placeholder="Not masked by Discord — only you can see this modal, but the text itself is plain",
         max_length=128,
         required=True,
     )
@@ -628,7 +714,11 @@ async def gt_sf_login(interaction: discord.Interaction, user: Optional[discord.M
             )
             return
 
-    await interaction.response.send_modal(SFLoginModal(target))
+    view = SFLoginDisclaimerView(invoker_id=interaction.user.id, target=target)
+    await interaction.response.send_message(
+        embed=_build_sf_login_disclaimer_embed(), view=view, ephemeral=True
+    )
+    view.message = await interaction.original_response()
 
 
 # ---------------------------------------------------------------------------
