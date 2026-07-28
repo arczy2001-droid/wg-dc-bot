@@ -358,13 +358,13 @@ def _get_active_accounts() -> list[dict[str, Any]]:
     """Every account with auto_checks enabled, across all guilds."""
     conn = sqlite3.connect(DB_PATH)
     rows = conn.execute(
-        """SELECT guild_id, discord_user_id, world_name, sf_username, password_enc
+        """SELECT guild_id, discord_user_id, world_name, sf_username, password_enc, last_status
            FROM sf_accounts WHERE auto_checks=1"""
     ).fetchall()
     conn.close()
     return [
         {"guild_id": r[0], "discord_user_id": r[1], "world_name": r[2],
-         "sf_username": r[3], "password_enc": r[4]}
+         "sf_username": r[3], "password_enc": r[4], "last_status": r[5]}
         for r in rows
     ]
 
@@ -783,17 +783,40 @@ class SFMonitor:
 
         if not result.get("ok"):
             error = str(result.get("error", "unknown error"))
-            _record_check(guild_id, acc["discord_user_id"], world, f"❌ {error[:150]}")
 
             # Distinguish "your login stopped working" (needs the user to act)
             # from a transient network blip (which will just retry next hour).
-            if any(tok in error.lower() for tok in ("wrong pass", "invalid", "auth", "password")):
+            #
+            # IMPORTANT: this keyword match is a guess, not a verified signal —
+            # sf_probe.rs reports the raw Rust Debug text of whatever error the
+            # sf-api crate returned, and words like "invalid"/"auth" can show
+            # up in plenty of TRANSIENT error variants too (a dropped
+            # connection during the game's daily server reset, a momentary
+            # session hiccup, etc.), not just an actually-wrong password.
+            # A single match is therefore not trustworthy on its own — we only
+            # tell the user to re-login once the SAME classification happens
+            # on two checks in a row, an hour apart. That one-off midnight-ish
+            # blips (which recover on their own next hour) don't turn into a
+            # false "your password changed" alert.
+            looks_like_bad_creds = any(
+                tok in error.lower() for tok in ("wrong pass", "invalid", "auth", "password")
+            )
+            previously_suspected = str(acc.get("last_status") or "").startswith("❌ CRED_SUSPECT:")
+
+            if looks_like_bad_creds and previously_suspected:
+                _record_check(guild_id, acc["discord_user_id"], world, f"❌ {error[:150]}")
                 await self._dm_user(
                     acc["discord_user_id"],
                     f"⚠️ Automatic S&F check for `{world}` failed: the stored credentials were "
-                    f"rejected. This usually means the password changed.\n"
+                    f"rejected on two checks in a row. This usually means the password changed.\n"
                     f"Run `/gt_sf_login` to reconnect — hourly checks will keep failing until then."
                 )
+            elif looks_like_bad_creds:
+                # First occurrence — record it as "suspected" but don't alarm
+                # the user yet; next hour's check will confirm or clear it.
+                _record_check(guild_id, acc["discord_user_id"], world, f"❌ CRED_SUSPECT: {error[:150]}")
+            else:
+                _record_check(guild_id, acc["discord_user_id"], world, f"❌ {error[:150]}")
             return
 
         characters = result.get("characters", [])
@@ -847,16 +870,19 @@ class SFMonitor:
         """Posts an attack/defense alert, once per distinct battle.
 
         Channel routing: prefers the per-kind channel from
-        world_notify_config (/gt_sf_toggle) if configured; falls back to
-        attack_config's single channel (/gt_attack_setup) otherwise. The
-        ping role always comes from attack_config — /gt_sf_toggle doesn't
-        configure a separate role, it only routes channels + defense muting.
+        world_notify_config if configured (there is currently no command
+        that sets attack_channel_id/defense_channel_id — see attack_alert.py's
+        module docstring); falls back to attack_config's single channel
+        (/gt_attack_setup) otherwise. The ping role always comes from
+        attack_config — world_notify_config doesn't configure a separate
+        role, it only holds per-kind channel overrides + defense muting.
 
-        mute_defense: if set for this world, a defending battle is marked
-        as alerted WITHOUT actually sending anything — i.e. "acknowledge
-        and suppress", not "defer until unmuted". If you'd rather a later
-        /gt_sf_toggle unmute cause a backlog of suppressed alerts to fire,
-        that's a one-line change (skip the _mark_alerted call below instead).
+        mute_defense: if set for this world (via /gt_attack_setup), a
+        defending battle is marked as alerted WITHOUT actually sending
+        anything — i.e. "acknowledge and suppress", not "defer until
+        unmuted". If you'd rather a later /gt_attack_setup unmute cause a
+        backlog of suppressed alerts to fire, that's a one-line change
+        (skip the _mark_alerted call below instead).
         """
         battle_date = str(battle.get("date", ""))
         if _already_alerted(guild_id, world, kind, battle_date):
@@ -873,7 +899,8 @@ class SFMonitor:
             return
 
         # Reuse the per-world role configured via /gt_attack_setup; prefer
-        # /gt_sf_toggle's per-kind channel if set, else fall back to
+        # world_notify_config's per-kind channel if set (currently only
+        # mute_defense is ever written there), else fall back to
         # attack_config's single channel.
         conn = sqlite3.connect(DB_PATH)
         row = conn.execute(
@@ -893,7 +920,7 @@ class SFMonitor:
 
         if not channel_id:
             print(f"sf_auth: {world} has a {kind} battle but no channel configured "
-                  f"(checked /gt_sf_toggle and /gt_attack_setup) — skipping alert")
+                  f"(checked world_notify_config and /gt_attack_setup) — skipping alert")
             return
 
         guild_obj = self.bot.get_guild(int(guild_id))
