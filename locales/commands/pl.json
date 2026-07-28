@@ -170,7 +170,7 @@
     "description": "Pokaż swoje połączone konta Shakes & Fidget i status sprawdzania."
   },
   "gt_alerts_panel": {
-    "description": "Opublikuj panel konfiguracji alertów dla jednego świata (kanał, rola do pingowania, wyciszenie obrony).",
+    "description": "Opublikuj panel alertów dla świata (kanał, rola pingowana, wyciszenie obrony).",
     "options": {
       "world_name": "Świat, którego dotyczy ta konfiguracja alertów (np. eu20)"
     }
