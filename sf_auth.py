@@ -91,6 +91,8 @@ import discord
 from discord import app_commands
 from discord.ext import tasks
 
+from world_registry import WorldTransformer, resolve_server_domain, WorldResolutionError
+
 DB_PATH = "gildia.db"
 
 # Path to the compiled Rust probe binary (see sf_probe.rs / Cargo.toml).
@@ -616,12 +618,22 @@ class SFLoginModal(discord.ui.Modal, title="Shakes & Fidget Login"):
         self.target_user = target_user
 
     async def on_submit(self, interaction: discord.Interaction):
-        # ephemeral=True: nobody else in the channel sees any of this.
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        server = self.server.value.strip()
+        server_input = self.server.value.strip()
         username = self.username.value.strip()
         password = self.password.value
+
+        # SFLoginModal's `server` field is a Modal TextInput, not a slash
+        # command option — app_commands.Transform only runs on the latter,
+        # so this is the one place in the codebase that calls
+        # resolve_server_domain() directly rather than via WorldTransformer.
+        try:
+            server = resolve_server_domain(interaction.guild_id, server_input)
+        except WorldResolutionError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+
+        # ephemeral=True: nobody else in the channel sees any of this.
+        await interaction.response.defer(ephemeral=True, thinking=True)
 
         # Fail fast if encryption isn't configured — we must never reach the
         # storage step without a working key.
@@ -725,13 +737,33 @@ async def gt_sf_login(interaction: discord.Interaction, user: Optional[discord.M
 # LOGOUT
 # ---------------------------------------------------------------------------
 
+async def _my_sf_world_autocomplete(interaction: discord.Interaction, current: str):
+    """Suggests from the CALLER's own registered sf_accounts — distinct
+    from world_registry's registered_world_autocomplete (guild-wide
+    absence-tracking worlds) and world_alias_autocomplete (every real
+    server that exists). Here, only worlds this specific person actually
+    has stored credentials for are useful suggestions."""
+    if interaction.guild_id is None:
+        return []
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute(
+        "SELECT world_name FROM sf_accounts WHERE guild_id=? AND discord_user_id=? AND world_name LIKE ? "
+        "ORDER BY world_name LIMIT 25",
+        (str(interaction.guild_id), str(interaction.user.id), f"%{current.strip().lower()}%")
+    ).fetchall()
+    conn.close()
+    return [app_commands.Choice(name=r[0], value=r[0]) for r in rows]
+
+
 @app_commands.command(
     name="gt_sf_logout",
     description="Delete your stored Shakes & Fidget credentials from the bot.",
 )
 @app_commands.describe(world="Only remove this world (omit to remove all of yours)")
+@app_commands.autocomplete(world=_my_sf_world_autocomplete)
 @app_commands.guild_only()
-async def gt_sf_logout(interaction: discord.Interaction, world: Optional[str] = None):
+async def gt_sf_logout(interaction: discord.Interaction,
+                       world: Optional[app_commands.Transform[str, WorldTransformer]] = None):
     deleted = _delete_account(interaction.guild_id, interaction.user.id, world)
     if deleted:
         await interaction.response.send_message(
@@ -756,9 +788,10 @@ async def gt_sf_logout(interaction: discord.Interaction, world: Optional[str] = 
     state="True to enable hourly checks, False to disable",
     world="Apply to this world only (omit for all of your accounts)",
 )
+@app_commands.autocomplete(world=_my_sf_world_autocomplete)
 @app_commands.guild_only()
 async def gt_sf_toggle_checks(interaction: discord.Interaction, state: bool,
-                              world: Optional[str] = None):
+                              world: Optional[app_commands.Transform[str, WorldTransformer]] = None):
     changed = _set_auto_checks(interaction.guild_id, interaction.user.id, world, state)
     if not changed:
         await interaction.response.send_message(
