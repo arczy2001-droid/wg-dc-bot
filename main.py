@@ -11,7 +11,7 @@ from typing import Optional
 import asyncio
 import difflib
 import aiohttp
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 from setup_wizard import (
     setup as setup_command,
@@ -36,7 +36,8 @@ from recruitment import (
 )
 from attack_alert import (
     init_attack_alert_table,
-    gt_attack_setup,
+    gt_alerts_panel,
+    register_alert_panel_views,
 )
 from sf_auth import (
     init_sf_auth_tables,
@@ -55,7 +56,6 @@ TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 OCR_API_KEY = os.getenv("OCR_SPACE_API_KEY")
 DB_PATH = "gildia.db"
 
-#    BAZA DANYCH (każda tabela jest teraz scoped per-guild via guild_id)
 #    Uwaga: tabela 'ustawienia' (kanal_glowy / kanal_logow) zostala zastapiona
 #    przez 'guild_config' z setup_wizard.py — nie tworzymy jej tu juz dla nowych instalacji.
 def init_db():
@@ -181,28 +181,41 @@ def init_db():
         )""")
     conn.commit(); conn.close()
 
-#    OCR
 async def analizuj_screen(file_path):
     url = 'https://api.ocr.space/parse/image'
     try:
         with open(file_path, 'rb') as f:
             payload = {'apikey': OCR_API_KEY, 'language': 'eng', 'OCREngine': '2', 'scale': 'true', 'file': f}
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, data=payload) as resp:
+                async with session.post(url, data=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                     res = await resp.json()
-                    return res['ParsedResults'][0]['ParsedText'].splitlines()
     except Exception as e:
-        print(f"Error during OCR analysis: {e}")
+        print(f"Error during OCR request: {e}")
         return []
 
-#    FISHFISH (sprawdzanie domen)
+    # The OCR API returns 200 with an error body (rate limit, bad key,
+    # processing failure) rather than a non-200 status — so we must inspect
+    # its own status fields instead of assuming ParsedResults is populated.
+    # Blindly indexing res['ParsedResults'][0] on an error body would raise,
+    # get swallowed, and silently record an empty (absence-free) report.
+    if not isinstance(res, dict) or res.get("IsErroredOnProcessing"):
+        print(f"OCR API reported an error: {res.get('ErrorMessage') if isinstance(res, dict) else res}")
+        return []
+    parsed = res.get("ParsedResults")
+    if not parsed:
+        print("OCR API returned no ParsedResults.")
+        return []
+    return (parsed[0].get("ParsedText") or "").splitlines()
+
 async def is_malicious_domain(domena, session):
     """Returns True only if FishFish has this domain catalogued as
     malware/phishing. NOTE: GET /domains/:domain returns HTTP 200 for ANY
     catalogued domain (including ones marked 'safe') and 404 only if the
     domain was never catalogued at all — so checking status code alone
     is not enough, we must read the 'category' field."""
-    url_api = f"https://api.fishfish.gg/v1/domains/{domena}"
+    # Encode the domain so a crafted link can't inject extra path segments
+    # or query parameters into the request we send to FishFish.
+    url_api = f"https://api.fishfish.gg/v1/domains/{quote(domena, safe='')}"
     try:
         async with session.get(url_api, timeout=aiohttp.ClientTimeout(total=5)) as response:
             if response.status == 200:
@@ -306,7 +319,6 @@ async def wyslij_log(guild_id: str, tytul: str, kolor: discord.Color, autor: dis
     except Exception as e:
         print(f"Error sending log embed: {e}")
 
-#    BOT
 class MyBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=discord.Intents.all())
@@ -329,8 +341,9 @@ class MyBot(commands.Bot):
         self.tree.add_command(sf_events_reload)
         self.tree.add_command(events_command)
         self.tree.add_command(recruitment_panel)
-        self.tree.add_command(gt_attack_setup)
+        self.tree.add_command(gt_alerts_panel)
         await register_persistent_views(self)  # re-attach buttons after restart
+        await register_alert_panel_views(self)  # re-attach alert-panel mute toggles after restart
         await self.tree.set_translator(CommandTranslator())  # must be set before sync()
         self.czyszczenie.start()
         self.niedzielny_ranking.start()
@@ -439,7 +452,6 @@ async def sprawdz_pozwolenie(interaction: discord.Interaction) -> bool:
             return False
     return True
 
-#    Komendy
 @bot.tree.command(name="gt_world_add", description="Add world and assign a channel")
 @app_commands.autocomplete(nazwa=world_alias_autocomplete)
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -622,14 +634,34 @@ async def wg(interaction: discord.Interaction, swiat: app_commands.Transform[str
         await interaction.followup.send(translator.get_text(interaction.guild_id, "wg.unknown_world"))
         return
 
+    # Reject uploads that aren't plausibly a report screenshot before we
+    # write anything to disk or spend an OCR call on them: cap the size (a
+    # multi-MB or spoofed upload is a disk-fill / OCR-cost DoS vector) and
+    # require an image content type.
+    MAX_SCREEN_BYTES = 8 * 1024 * 1024  # 8 MB
+    if screen.size and screen.size > MAX_SCREEN_BYTES:
+        conn.close()
+        await interaction.followup.send("❌ That image is too large (max 8 MB).", ephemeral=True)
+        return
+    if screen.content_type and not screen.content_type.startswith("image/"):
+        conn.close()
+        await interaction.followup.send("❌ That attachment isn't an image.", ephemeral=True)
+        return
+
     # Sanitize filename so we never write outside the working dir
     safe_name = re.sub(r'[^A-Za-z0-9._-]', '_', os.path.basename(screen.filename))
     path = f"temp_{interaction.id}_{safe_name}"
-    await screen.save(path)
-    sklad = [r[0] for r in conn.cursor().execute(
-        "SELECT nick FROM czlonkowie WHERE guild_id=? AND swiat=?", (gid, swiat.lower())
-    ).fetchall()]
-    lines = await analizuj_screen(path)
+    try:
+        await screen.save(path)
+        sklad = [r[0] for r in conn.cursor().execute(
+            "SELECT nick FROM czlonkowie WHERE guild_id=? AND swiat=?", (gid, swiat.lower())
+        ).fetchall()]
+        lines = await analizuj_screen(path)
+    finally:
+        # Always remove the temp file, even if saving or OCR raised — otherwise
+        # a mid-processing error leaks the uploaded image onto disk.
+        if os.path.exists(path):
+            os.remove(path)
 
     nieobecni = []
     for l in lines:
@@ -654,7 +686,6 @@ async def wg(interaction: discord.Interaction, swiat: app_commands.Transform[str
         )
 
     conn.commit(); conn.close()
-    if os.path.exists(path): os.remove(path)
 
     opis_nieobecnych = ', '.join(nieobecni) if nieobecni else translator.get_text(interaction.guild_id, "wg.full_attendance")
 
