@@ -147,15 +147,6 @@
       "member_role_4": "Opcjonalnie: dodatkowa ranga nadawana przyjętym kandydatom"
     }
   },
-  "gt_attack_setup": {
-    "description": "Ustaw kanał alertów i rolę pingowaną dla każdego świata",
-    "options": {
-      "world_name": "Nazwa świata (np. eu20)",
-      "channel": "Kanał, na którym będą publikowane alerty ataku dla tego świata",
-      "ping_role": "Rola oznaczana przy wywołaniu alertu ataku dla tego świata",
-      "mute_defense": "Wycisz automatyczne pingi alertów obrony dla tego świata (pozostaw puste, aby zachować obecne ustawienie)"
-    }
-  },
   "gt_sf_login": {
     "description": "Bezpiecznie połącz konto Shakes & Fidget do monitorowania gildii.",
     "options": {
@@ -177,5 +168,11 @@
   },
   "gt_sf_status": {
     "description": "Pokaż swoje połączone konta Shakes & Fidget i status sprawdzania."
+  },
+  "gt_alerts_panel": {
+    "description": "Opublikuj panel konfiguracji alertów dla jednego świata (kanał, rola do pingowania, wyciszenie obrony).",
+    "options": {
+      "world_name": "Świat, którego dotyczy ta konfiguracja alertów (np. eu20)"
+    }
   }
 }
