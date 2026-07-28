@@ -465,6 +465,16 @@ async def run_probe(server: str, username: str, password: str) -> dict[str, Any]
     problems are converted into {"ok": False, "error": ...} so callers only
     ever need one error path.
     """
+    # The probe reads exactly three newline-delimited fields from stdin
+    # (server, username, password). A newline or carriage return embedded in
+    # any field would shift the others and let a crafted value impersonate a
+    # different field — so reject control characters outright rather than
+    # trying to escape them. NUL is rejected too since it can't cross the
+    # process boundary intact.
+    for label, value in (("server", server), ("username", username), ("password", password)):
+        if "\n" in value or "\r" in value or "\x00" in value:
+            return {"ok": False, "error": f"{label} contains an illegal control character"}
+
     if not os.path.exists(SF_PROBE_PATH):
         return {"ok": False, "error": (
             f"probe binary not found at {SF_PROBE_PATH} — build it with "
@@ -996,14 +1006,14 @@ class SFMonitor:
         world_notify_config if configured (there is currently no command
         that sets attack_channel_id/defense_channel_id — see attack_alert.py's
         module docstring); falls back to attack_config's single channel
-        (/gt_attack_setup) otherwise. The ping role always comes from
+        (/gt_alerts_panel) otherwise. The ping role always comes from
         attack_config — world_notify_config doesn't configure a separate
         role, it only holds per-kind channel overrides + defense muting.
 
-        mute_defense: if set for this world (via /gt_attack_setup), a
+        mute_defense: if set for this world (via /gt_alerts_panel), a
         defending battle is marked as alerted WITHOUT actually sending
         anything — i.e. "acknowledge and suppress", not "defer until
-        unmuted". If you'd rather a later /gt_attack_setup unmute cause a
+        unmuted". If you'd rather a later /gt_alerts_panel unmute cause a
         backlog of suppressed alerts to fire, that's a one-line change
         (skip the _mark_alerted call below instead).
         """
@@ -1021,7 +1031,7 @@ class SFMonitor:
             _mark_alerted(guild_id, world, kind, battle_date)  # suppressed, not deferred — see docstring
             return
 
-        # Reuse the per-world role configured via /gt_attack_setup; prefer
+        # Reuse the per-world role configured via /gt_alerts_panel; prefer
         # world_notify_config's per-kind channel if set (currently only
         # mute_defense is ever written there), else fall back to
         # attack_config's single channel.
@@ -1043,7 +1053,7 @@ class SFMonitor:
 
         if not channel_id:
             print(f"sf_auth: {world} has a {kind} battle but no channel configured "
-                  f"(checked world_notify_config and /gt_attack_setup) — skipping alert")
+                  f"(checked world_notify_config and /gt_alerts_panel) — skipping alert")
             return
 
         guild_obj = self.bot.get_guild(int(guild_id))
