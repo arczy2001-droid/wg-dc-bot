@@ -47,7 +47,9 @@
     "description": "Show absence ranking (7d / 14d / 31d / all-time)",
     "options": {
       "swiat": "World name",
-      "okres": "Time window to include: 7d / 14d / 31d / all-time (default: all-time)"
+      "okres": "Time window to include (default: all time, ignored if 'od' or 'do' is set)",
+      "od": "Custom range start: DD.MM or DD.MM.YYYY (e.g. 10.07)",
+      "do": "Custom range end: DD.MM or DD.MM.YYYY (e.g. 17.07)"
     }
   },
   "gt_report_delete": {
@@ -150,23 +152,8 @@
     "options": {
       "world_name": "World name (e.g. eu20)",
       "channel": "Channel where attack alerts for this world will be posted",
-      "ping_role": "Role to ping when an attack alert is triggered for this world"
-    }
-  },
-  "attack": {
-    "description": "Trigger an attack/raid alert",
-    "options": {
-      "world_name": "World name (e.g. eu20)",
-      "time": "Attack time, e.g. 20:00 (omit for an immediate 'happening now' alert)"
-    }
-  },
-  "gt_sf_toggle": {
-    "description": "Configure per-world attack/defense alert channels, or view current settings.",
-    "options": {
-      "world_name": "World to configure (pick from the list)",
-      "attack_channel": "Channel for attack alerts (leave unset to keep current)",
-      "defense_channel": "Channel for defense alerts (leave unset to keep current)",
-      "mute_defense": "Suppress defense alerts entirely (True/False)"
+      "ping_role": "Role to ping when an attack alert is triggered for this world",
+      "mute_defense": "Suppress automated defense-alert pings for this world (leave unset to keep current)"
     }
   },
   "gt_sf_login": {
