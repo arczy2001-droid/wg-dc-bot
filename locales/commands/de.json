@@ -170,7 +170,7 @@
     "description": "Deine verbundenen Shakes & Fidget-Konten und deren Prüfstatus anzeigen."
   },
   "gt_alerts_panel": {
-    "description": "Das Alarm-Konfigurationspanel für eine Welt posten (Kanal, Ping-Rolle, Verteidigungs-Stummschaltung).",
+    "description": "Alarm-Panel für eine Welt posten (Kanal, Ping-Rolle, Verteidigung stummschalten).",
     "options": {
       "world_name": "Welt, für die diese Alarmkonfiguration gilt (z.B. eu20)"
     }
