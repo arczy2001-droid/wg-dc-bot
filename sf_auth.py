@@ -1069,18 +1069,18 @@ class SFMonitor:
         opponent = battle.get("opponent") or f"guild #{battle.get('opponent_id')}"
 
         if kind == "attacking":
-            title = "⚔️ Guild Attack Scheduled"
-            body = f"**{char['guild']}** is attacking **{opponent}**"
+            title = ""**{char['guild']}**"
+            body = f"⚔️ Prepare for attack ⚔️"
             colour = discord.Color.dark_red()
         else:
-            title = "🛡️ Incoming Attack!"
-            body = f"**{opponent}** is attacking **{char['guild']}**"
+            title = ""**{char['guild']}**"
+            body = f"🛡️ Prepare for defense! 🛡️"
             colour = discord.Color.orange()
 
         embed = discord.Embed(title=title, description=body, color=colour)
         embed.add_field(name="🕒 Time", value=when, inline=True)
         embed.add_field(name="🌍 World", value=world.upper(), inline=True)
-        embed.set_footer(text="Detected automatically by hourly guild check")
+        embed.set_footer(text="Message sent automatically")
 
         try:
             await channel.send(content=role.mention if role else None, embed=embed)
