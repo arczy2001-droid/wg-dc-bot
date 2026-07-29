@@ -1069,11 +1069,11 @@ class SFMonitor:
         opponent = battle.get("opponent") or f"guild #{battle.get('opponent_id')}"
 
         if kind == "attacking":
-            title = ""**{char['guild']}**"
+            title = f"**{char['guild']}**"
             body = f"⚔️ Prepare for attack ⚔️"
             colour = discord.Color.dark_red()
         else:
-            title = ""**{char['guild']}**"
+            title = f"**{char['guild']}**"
             body = f"🛡️ Prepare for defense! 🛡️"
             colour = discord.Color.orange()
 
