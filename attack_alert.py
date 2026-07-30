@@ -49,6 +49,8 @@ from discord import app_commands
 
 from world_registry import WorldTransformer, registered_world_autocomplete
 
+DB_PATH = "gildia.db"
+
 # ---------------------------------------------------------------------------
 # DATABASE
 # ---------------------------------------------------------------------------
