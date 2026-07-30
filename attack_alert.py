@@ -1,44 +1,35 @@
 """
 attack_alert.py
 ================
-Per-world attack alert configuration.
+Multi-World Guild Attack Alert system.
+
+Deliberately minimal by design: no buttons, no tracking, no roster — just a
+fast trigger that posts a themed embed and pings the right role for the
+right world. Two commands, one table.
 
 PERMISSION MODEL:
-    /gt_alerts_panel — requires Manage Server. Posts an interactive panel
-                    (channel picker, ping-role picker, and a defense-mute
-                    toggle) for one world. These are SERVER-WIDE per-world
-                    settings, not per-user: they decide where a world's
-                    automated attack/defense alerts go for everyone, so they
-                    live with the admin, not in each player's /gt_sf_login.
-
-WHY A PANEL AND NOT A MODAL/COMMAND:
-    A discord.ui.Modal can only hold TextInput fields — no channel/role
-    pickers, no toggle — so channel/role would have to be pasted as raw
-    numeric IDs. A View (this panel) can host native ChannelSelect /
-    RoleSelect components and a toggle button, which is why the config
-    moved here from the old /gt_attack_setup command.
-
-DATA MODEL (unchanged — SFMonitor in sf_auth.py reads these exactly as before):
-    attack_config          (guild_id, world_name) -> channel_id, role_id
-    world_notify_config    (guild_id, world_name) -> attack/defense channel
-                            overrides + mute_defense flag
-    The panel writes channel_id + role_id to attack_config and mute_defense
-    to world_notify_config. SFMonitor uses world_notify_config's channels if
-    set, falls back to attack_config's channel otherwise, and always pings
-    attack_config's role.
+    /attack_setup — requires Manage Server (consistent with other per-world
+                    setup commands like /wg_add_world in the main bot).
+    /attack       — requires "administrators or configured officer roles."
+                    Rather than build a second, parallel officer-role system
+                    just for this feature, this reuses the bot-admin role
+                    already stored in guild_config.admin_role (set via your
+                    existing /setup wizard) — one role to configure per
+                    server, not two. Server Administrator permission always
+                    passes as well.
 
 INTEGRATION (in gildia_bot.py):
 
     from attack_alert import (
         init_attack_alert_table,
-        gt_alerts_panel,
-        register_alert_panel_views,
+        attack_setup,
+        attack,
     )
 
     # in setup_hook, before tree.sync():
     init_attack_alert_table()
-    self.tree.add_command(gt_alerts_panel)
-    await register_alert_panel_views(self)   # re-attach the mute toggle after a restart
+    self.tree.add_command(attack_setup)
+    self.tree.add_command(attack)
 """
 
 import sqlite3
@@ -48,7 +39,6 @@ import discord
 from discord import app_commands
 
 from i18n import translator
-from world_registry import WorldTransformer, registered_world_autocomplete
 
 DB_PATH = "gildia.db"
 
@@ -77,7 +67,7 @@ def init_attack_alert_table() -> None:
     # Both are consulted when a battle is detected: SFMonitor uses
     # world_notify_config's channels if set, falling back to attack_config's
     # channel otherwise, and always uses attack_config's role_id for pings
-    # (no separate role field here — reuses what the panel configured).
+    # (no separate role field here — reuses what /gt_attack_setup configured).
     conn.execute("""
         CREATE TABLE IF NOT EXISTS world_notify_config (
             guild_id            TEXT NOT NULL,
@@ -118,22 +108,166 @@ def _save_world_config(guild_id: int, world_name: str, channel_id: int, role_id:
     conn.close()
 
 
+def _get_bot_admin_role_id(guild_id: int) -> Optional[str]:
+    """Reads guild_config.admin_role, set by /setup. Returns None if the
+    server never configured one (in which case only real Administrators
+    can use /attack)."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT admin_role FROM guild_config WHERE guild_id=?", (str(guild_id),)
+    ).fetchone()
+    conn.close()
+    return row[0] if row and row[0] else None
+
+
+def _is_officer_or_admin(interaction: discord.Interaction) -> bool:
+    if not isinstance(interaction.user, discord.Member):
+        return False
+    if interaction.user.guild_permissions.administrator:
+        return True
+    bot_admin_role_id = _get_bot_admin_role_id(interaction.guild_id)
+    if not bot_admin_role_id:
+        return False
+    return any(str(r.id) == bot_admin_role_id for r in interaction.user.roles)
+
 
 # ---------------------------------------------------------------------------
-# Shared helpers — used by /gt_alerts_panel below and by sf_auth.py's
-# SFMonitor (which imports get_notify_config directly).
-#
-# NOTE: world existence checks and world_name autocomplete used to be
-# defined locally here, but were never actually called (world_exists was
-# dead code) and duplicated logic that now lives centrally in
-# world_registry.py (world_exists / registered_world_autocomplete) so
-# main.py can share the exact same behavior instead of every file
-# reimplementing its own "worlds registered on this guild" query.
+# /attack_setup — admin-only config command
 # ---------------------------------------------------------------------------
+
+@app_commands.command(name="attack_setup", description="Configure the alert channel and ping role for a world's attack notifications.")
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.describe(
+    world_name="World name (e.g. eu20)",
+    channel="Channel where attack alerts for this world will be posted",
+    ping_role="Role to ping when an attack alert is triggered for this world",
+)
+async def attack_setup(
+    interaction: discord.Interaction,
+    world_name: str,
+    channel: discord.TextChannel,
+    ping_role: discord.Role,
+):
+    _save_world_config(interaction.guild_id, world_name, channel.id, ping_role.id)
+    await interaction.response.send_message(
+        f"✅ Attack alerts for **{world_name.upper()}** will now be posted in {channel.mention} "
+        f"and ping {ping_role.mention}.",
+        ephemeral=True,
+    )
+
+
+@attack_setup.error
+async def attack_setup_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("❌ You need **Manage Server** permission for this.", ephemeral=True)
+    else:
+        print(f"attack_setup error: {error}")
+        await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
+
+
+# ---------------------------------------------------------------------------
+# /attack — the fast trigger
+# ---------------------------------------------------------------------------
+
+@app_commands.command(name="attack", description="Trigger a guild attack/raid alert for a specific world.")
+@app_commands.describe(
+    world_name="World name (e.g. eu20)",
+    time="Attack time, e.g. 20:00 (omit for an immediate 'happening now' alert)",
+)
+async def attack(interaction: discord.Interaction, world_name: str, time: Optional[str] = None):
+    # Permission check: real Administrator OR the server's configured
+    # bot-admin role (guild_config.admin_role, set via /setup). No separate
+    # officer-role system — reuses what's already there.
+    if not _is_officer_or_admin(interaction):
+        await interaction.response.send_message(
+            "❌ You need Administrator permission or the server's configured admin role to use this.",
+            ephemeral=True,
+        )
+        return
+
+    config = _get_world_config(interaction.guild_id, world_name)
+    if not config:
+        await interaction.response.send_message(
+            f"❌ No attack alert configuration found for **{world_name.upper()}**. "
+            f"An admin needs to run `/attack_setup` for this world first.",
+            ephemeral=True,
+        )
+        return
+
+    channel_id, role_id = config
+    channel = interaction.guild.get_channel(int(channel_id))
+    role = interaction.guild.get_role(int(role_id))
+
+    if not channel:
+        await interaction.response.send_message(
+            f"❌ The configured channel for **{world_name.upper()}** no longer exists. "
+            f"Please run `/attack_setup` again.",
+            ephemeral=True,
+        )
+        return
+
+    # "now" is both the default (time=None) and a valid explicit value the
+    # user could type — treat both the same way.
+    is_now = time is None or time.strip().lower() == "now"
+
+    embed = discord.Embed(color=discord.Color.dark_red())
+    if is_now:
+        embed.description = (
+            f"⚔️ **Emergency! Guild Attack/Raid is happening NOW!** "
+            f"Join the fight immediately! ⚔️"
+        )
+    else:
+        embed.description = (
+            f"⚔️ **Guild Attack/Raid scheduled for: {time}!** "
+            f"Preparedness is key! ⚔️"
+        )
+    embed.set_footer(text=f"World: {world_name.upper()}")
+
+    ping_text = role.mention if role else f"@here (configured role no longer exists)"
+
+    try:
+        await channel.send(content=ping_text, embed=embed)
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            f"❌ I don't have permission to send messages in {channel.mention}.", ephemeral=True
+        )
+        return
+
+    await interaction.response.send_message(
+        f"✅ Attack alert sent to {channel.mention} for **{world_name.upper()}**.", ephemeral=True
+    )
+
+
+@attack.error
+async def attack_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    print(f"attack command error: {error}")
+    if interaction.response.is_done():
+        await interaction.followup.send("❌ Something went wrong.", ephemeral=True)
+    else:
+        await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
+
+
+# ---------------------------------------------------------------------------
+# /gt_sf_toggle — per-world notification routing + defense muting
+# ---------------------------------------------------------------------------
+
+def _world_exists(guild_id: int, world_name: str) -> bool:
+    """Validates against `swiaty`, the bot's canonical registered-worlds
+    table (populated by /gt_world_add) — the same source /gt_absent_list
+    etc. already validate world names against."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT 1 FROM swiaty WHERE guild_id=? AND nazwa=?", (str(guild_id), world_name.lower())
+    ).fetchone()
+    conn.close()
+    return row is not None
+
 
 def get_notify_config(guild_id: int, world_name: str) -> Optional[dict]:
-    """Public — sf_auth.py's SFMonitor calls this to route alerts."""
-    conn = sqlite3.connect(DB_PATH)
+    """Public — sf_auth.py's SFMonitor calls this to route alerts. Uses a
+    busy timeout because SFMonitor now calls it from up to
+    MAX_CONCURRENT_PROBES parallel tasks."""
+    conn = sqlite3.connect(DB_PATH, timeout=5.0)
     row = conn.execute(
         """SELECT attack_channel_id, defense_channel_id, mute_defense
            FROM world_notify_config WHERE guild_id=? AND world_name=?""",
@@ -188,149 +322,95 @@ def _upsert_notify_config(guild_id: int, world_name: str, *,
     return {"attack_channel_id": merged_attack, "defense_channel_id": merged_defense, "mute_defense": bool(merged_mute)}
 
 
-# ---------------------------------------------------------------------------
-# /gt_alerts_panel — admin posts a per-world config panel with native
-# channel/role pickers and a defense-mute toggle. Replaces the old
-# /gt_attack_setup command (see module docstring for why a panel).
-# ---------------------------------------------------------------------------
+async def _world_name_autocomplete(interaction: discord.Interaction, current: str):
+    """Populates the world_name dropdown from `swiaty` (configured worlds
+    for this server), filtered by whatever the user has typed so far.
 
-def _mute_button_label(muted: bool) -> str:
-    return "🔇 Defense pings: MUTED" if muted else "🔊 Defense pings: ON"
-
-
-class AlertConfigView(discord.ui.View):
-    """Per-world alert config panel.
-
-    The channel and role selects are ephemeral (only the admin who ran the
-    command sees them, timeout applies). The mute toggle is a PERSISTENT
-    button — its custom_id embeds the world so it keeps working after a bot
-    restart, re-registered via register_alert_panel_views(). Guild is taken
-    from interaction.guild_id at click time (a button click always carries
-    its guild), so it doesn't need to be baked into the custom_id.
+    NOTE: Discord's autocomplete is a SUGGESTION list, not a hard constraint
+    — a user can still type an arbitrary string and submit it. That's why
+    the command handler below validates with _world_exists() regardless of
+    what this function offered.
     """
-
-    def __init__(self, world_name: str, muted: bool = False):
-        super().__init__(timeout=None)
-        self.world_name = world_name.lower()
-
-        channel_select = discord.ui.ChannelSelect(
-            channel_types=[discord.ChannelType.text],
-            placeholder="Channel to post this world's attack alerts",
-            custom_id=f"alertcfg_channel_{self.world_name}",
-            min_values=1, max_values=1,
-        )
-        channel_select.callback = self._on_channel
-        self.add_item(channel_select)
-
-        role_select = discord.ui.RoleSelect(
-            placeholder="Role to ping on an attack alert",
-            custom_id=f"alertcfg_role_{self.world_name}",
-            min_values=1, max_values=1,
-        )
-        role_select.callback = self._on_role
-        self.add_item(role_select)
-
-        self.mute_button = discord.ui.Button(
-            label=_mute_button_label(muted),
-            style=discord.ButtonStyle.secondary,
-            custom_id=f"alertcfg_mute_{self.world_name}",
-        )
-        self.mute_button.callback = self._on_mute_toggle
-        self.add_item(self.mute_button)
-
-    async def _guard(self, interaction: discord.Interaction) -> bool:
-        if not isinstance(interaction.user, discord.Member) or not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(
-                "❌ You need **Manage Server** permission to change alert settings.", ephemeral=True
-            )
-            return False
-        return True
-
-    async def _on_channel(self, interaction: discord.Interaction):
-        if not await self._guard(interaction):
-            return
-        channel = interaction.data["values"][0]  # channel id as str
-        existing = _get_world_config(interaction.guild_id, self.world_name)
-        role_id = existing[1] if existing else "0"  # keep role if already set, else placeholder
-        _save_world_config(interaction.guild_id, self.world_name, int(channel), int(role_id))
-        await interaction.response.send_message(
-            f"✅ Attack alerts for **{self.world_name.upper()}** will post in <#{channel}>."
-            + ("" if role_id != "0" else "\n⚠️ No ping role set yet — pick one below."),
-            ephemeral=True,
-        )
-
-    async def _on_role(self, interaction: discord.Interaction):
-        if not await self._guard(interaction):
-            return
-        role_id = interaction.data["values"][0]
-        existing = _get_world_config(interaction.guild_id, self.world_name)
-        channel_id = existing[0] if existing else "0"
-        _save_world_config(interaction.guild_id, self.world_name, int(channel_id), int(role_id))
-        await interaction.response.send_message(
-            f"✅ Attack alerts for **{self.world_name.upper()}** will ping <@&{role_id}>."
-            + ("" if channel_id != "0" else "\n⚠️ No alert channel set yet — pick one above."),
-            ephemeral=True,
-        )
-
-    async def _on_mute_toggle(self, interaction: discord.Interaction):
-        if not await self._guard(interaction):
-            return
-        current = get_notify_config(interaction.guild_id, self.world_name)
-        now_muted = not (current["mute_defense"] if current else False)
-        _upsert_notify_config(interaction.guild_id, self.world_name, mute_defense=now_muted)
-        self.mute_button.label = _mute_button_label(now_muted)
-        await interaction.response.edit_message(view=self)
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute(
+        "SELECT nazwa FROM swiaty WHERE guild_id=? AND nazwa LIKE ? ORDER BY nazwa LIMIT 25",
+        (str(interaction.guild_id), f"%{current.lower()}%")
+    ).fetchall()
+    conn.close()
+    return [app_commands.Choice(name=r[0], value=r[0]) for r in rows]
 
 
 @app_commands.command(
-    name="gt_alerts_panel",
-    description="Post the attack-alert config panel for one world (channel, ping role, defense mute).",
+    name="gt_sf_toggle",
+    description="Configure per-world attack/defense alert channels, or view current settings.",
+)
+@app_commands.autocomplete(world_name=_world_name_autocomplete)
+@app_commands.describe(
+    world_name="World to configure (pick from the list)",
+    attack_channel="Channel for attack alerts (leave unset to keep current)",
+    defense_channel="Channel for defense alerts (leave unset to keep current)",
+    mute_defense="Suppress defense alerts entirely (True/False)",
 )
 @app_commands.checks.has_permissions(manage_guild=True)
-@app_commands.autocomplete(world_name=registered_world_autocomplete)
-@app_commands.describe(world_name="World this alert config applies to (e.g. eu20)")
-async def gt_alerts_panel(
+async def gt_sf_toggle(
     interaction: discord.Interaction,
-    world_name: app_commands.Transform[str, WorldTransformer],
+    world_name: str,
+    attack_channel: Optional[discord.TextChannel] = None,
+    defense_channel: Optional[discord.TextChannel] = None,
+    mute_defense: Optional[bool] = None,
 ):
-    cfg = get_notify_config(interaction.guild_id, world_name)
-    muted = cfg["mute_defense"] if cfg else False
-    existing = _get_world_config(interaction.guild_id, world_name)
+    if not _world_exists(interaction.guild_id, world_name):
+        await interaction.response.send_message(
+            f"❌ **{world_name}** isn't a configured world on this server. "
+            f"Use `/gt_world_add` first, or pick one from the autocomplete list.",
+            ephemeral=True,
+        )
+        return
 
-    status_lines = [f"**Alert settings — {world_name.upper()}**"]
-    if existing:
-        status_lines.append(f"• Channel: <#{existing[0]}>" if existing[0] != "0" else "• Channel: *(not set)*")
-        status_lines.append(f"• Ping role: <@&{existing[1]}>" if existing[1] != "0" else "• Ping role: *(not set)*")
-    else:
-        status_lines.append("• Channel: *(not set)*\n• Ping role: *(not set)*")
-    status_lines.append(f"• Defense pings: {'muted' if muted else 'on'}")
+    # --- STATUS MODE: no optional args given at all -> just show current config ---
+    if attack_channel is None and defense_channel is None and mute_defense is None:
+        cfg = get_notify_config(interaction.guild_id, world_name)
+        embed = discord.Embed(
+            title=f"🔔 Notification settings — {world_name.upper()}",
+            color=discord.Color.blurple(),
+        )
+        if not cfg:
+            embed.description = "No custom notification settings configured yet — using attack-alert defaults."
+        else:
+            atk_ch = f"<#{cfg['attack_channel_id']}>" if cfg["attack_channel_id"] else "*(using /gt_attack_setup default)*"
+            def_ch = f"<#{cfg['defense_channel_id']}>" if cfg["defense_channel_id"] else "*(using /gt_attack_setup default)*"
+            embed.add_field(name="⚔️ Attack channel", value=atk_ch, inline=False)
+            embed.add_field(name="🛡️ Defense channel", value=def_ch, inline=False)
+            embed.add_field(name="🔇 Defense muted", value="Yes" if cfg["mute_defense"] else "No", inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
 
-    await interaction.response.send_message(
-        "\n".join(status_lines),
-        view=AlertConfigView(world_name, muted=muted),
-        ephemeral=True,
+    # --- CONFIG MODE: at least one optional arg given -> partial update ---
+    result = _upsert_notify_config(
+        interaction.guild_id, world_name,
+        attack_channel_id=attack_channel.id if attack_channel else None,
+        defense_channel_id=defense_channel.id if defense_channel else None,
+        mute_defense=mute_defense,
     )
 
+    lines = [f"✅ Updated notification settings for **{world_name.upper()}**:"]
+    if attack_channel:
+        lines.append(f"  • Attack alerts → {attack_channel.mention}")
+    if defense_channel:
+        lines.append(f"  • Defense alerts → {defense_channel.mention}")
+    if mute_defense is not None:
+        lines.append(f"  • Defense alerts muted: **{'Yes' if mute_defense else 'No'}**")
 
-@gt_alerts_panel.error
-async def gt_alerts_panel_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+
+@gt_sf_toggle.error
+async def gt_sf_toggle_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("❌ You need **Manage Server** permission for this.", ephemeral=True)
     else:
-        print(f"gt_alerts_panel error: {error}")
-        await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
-
-
-async def register_alert_panel_views(bot: discord.Client) -> None:
-    """Re-attach the persistent mute toggle for every world that has alert
-    config, so the button keeps working after a restart. Channel/role selects
-    are ephemeral (tied to a live /gt_alerts_panel invocation) and don't need
-    re-registration. Mirrors recruitment.py's register_persistent_views()."""
-    conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute("SELECT world_name FROM attack_config").fetchall()
-    extra = conn.execute("SELECT world_name FROM world_notify_config").fetchall()
-    conn.close()
-    worlds = {r[0] for r in rows} | {r[0] for r in extra}
-    for world in worlds:
-        bot.add_view(AlertConfigView(world))
-        
+        print(f"gt_sf_toggle error: {error}")
+        if interaction.response.is_done():
+            await interaction.followup.send("❌ Something went wrong.", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
