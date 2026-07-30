@@ -34,7 +34,7 @@ from recruitment import (
     register_persistent_views,
     recruitment_panel,
 )
-from attack_alert import (
+from gt_attack_alert import (
     init_attack_alert_table,
     gt_alerts_panel,
     register_alert_panel_views,
