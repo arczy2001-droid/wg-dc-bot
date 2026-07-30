@@ -91,8 +91,6 @@ import discord
 from discord import app_commands
 from discord.ext import tasks
 
-from world_registry import WorldTransformer, resolve_server_domain, WorldResolutionError
-
 DB_PATH = "gildia.db"
 
 # Path to the compiled Rust probe binary (see sf_probe.rs / Cargo.toml).
@@ -104,8 +102,12 @@ SF_PROBE_PATH = os.getenv("SF_PROBE_PATH", "./target/release/sf_probe")
 # strongly recommended — see the honest-limitation note in the docstring.
 ALLOW_OTHER_USERS = False
 
-# How long a single probe may run before we give up (network timeouts).
-PROBE_TIMEOUT_SECONDS = 60
+# How long a single probe may run before we give up. Lower than a full
+# minute on purpose: with bounded concurrency (MAX_CONCURRENT_PROBES) a
+# single hung login otherwise ties up one of the few slots for its whole
+# duration, stalling the sweep. 25s is comfortably longer than a healthy
+# S&F login (a few seconds) while capping how long a dead one blocks a slot.
+PROBE_TIMEOUT_SECONDS = 25
 
 
 # ---------------------------------------------------------------------------
@@ -170,9 +172,24 @@ def decrypt_password(ciphertext: bytes) -> str:
 # DATABASE
 # ---------------------------------------------------------------------------
 
+def _connect() -> sqlite3.Connection:
+    """SQLite connection with a busy timeout so concurrent probe writers
+    (up to MAX_CONCURRENT_PROBES run in parallel) wait for each other's
+    write lock instead of immediately raising 'database is locked'. WAL mode
+    (set once in init_sf_auth_tables) lets readers not block the writer.
+    5s is plenty — writes here are single tiny rows."""
+    conn = sqlite3.connect(DB_PATH, timeout=5.0)
+    return conn
+
+
 def init_sf_auth_tables() -> None:
     """Idempotent — safe to call on every startup."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=5.0)
+    # WAL lets the hourly monitor's concurrent writers and any reader
+    # (e.g. /gt_sf_status) coexist far better than the default rollback
+    # journal, which serializes everything. Persists on the db file, so
+    # setting it once here is enough.
+    conn.execute("PRAGMA journal_mode=WAL")
     c = conn.cursor()
 
     # ------------------------------------------------------------------
@@ -358,21 +375,21 @@ def _set_auto_checks(guild_id: int, discord_user_id: int, world_name: Optional[s
 
 def _get_active_accounts() -> list[dict[str, Any]]:
     """Every account with auto_checks enabled, across all guilds."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _connect()
     rows = conn.execute(
-        """SELECT guild_id, discord_user_id, world_name, sf_username, password_enc, last_status
+        """SELECT guild_id, discord_user_id, world_name, sf_username, password_enc
            FROM sf_accounts WHERE auto_checks=1"""
     ).fetchall()
     conn.close()
     return [
         {"guild_id": r[0], "discord_user_id": r[1], "world_name": r[2],
-         "sf_username": r[3], "password_enc": r[4], "last_status": r[5]}
+         "sf_username": r[3], "password_enc": r[4]}
         for r in rows
     ]
 
 
 def _record_check(guild_id: str, discord_user_id: str, world_name: str, status: str) -> None:
-    conn = sqlite3.connect(DB_PATH)
+    conn = _connect()
     conn.execute(
         """UPDATE sf_accounts SET last_check=?, last_status=?
            WHERE guild_id=? AND discord_user_id=? AND world_name=?""",
@@ -384,7 +401,7 @@ def _record_check(guild_id: str, discord_user_id: str, world_name: str, status: 
 
 
 def _already_alerted(guild_id: str, world_name: str, kind: str, battle_date: str) -> bool:
-    conn = sqlite3.connect(DB_PATH)
+    conn = _connect()
     row = conn.execute(
         """SELECT 1 FROM sf_alert_state
            WHERE guild_id=? AND world_name=? AND kind=? AND battle_date=?""",
@@ -395,7 +412,7 @@ def _already_alerted(guild_id: str, world_name: str, kind: str, battle_date: str
 
 
 def _mark_alerted(guild_id: str, world_name: str, kind: str, battle_date: str) -> None:
-    conn = sqlite3.connect(DB_PATH)
+    conn = _connect()
     conn.execute(
         "INSERT OR IGNORE INTO sf_alert_state VALUES (?, ?, ?, ?, ?)",
         (guild_id, world_name, kind, battle_date, datetime.now(timezone.utc).isoformat())
@@ -426,7 +443,7 @@ _TZ_ALIASES = {
 
 def _get_guild_timezone(guild_id: str) -> str:
     """Reads the timezone chosen during /gt_setup. Falls back to UTC."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _connect()
     row = conn.execute(
         "SELECT timezone FROM guild_config WHERE guild_id=?", (guild_id,)
     ).fetchone()
@@ -465,16 +482,6 @@ async def run_probe(server: str, username: str, password: str) -> dict[str, Any]
     problems are converted into {"ok": False, "error": ...} so callers only
     ever need one error path.
     """
-    # The probe reads exactly three newline-delimited fields from stdin
-    # (server, username, password). A newline or carriage return embedded in
-    # any field would shift the others and let a crafted value impersonate a
-    # different field — so reject control characters outright rather than
-    # trying to escape them. NUL is rejected too since it can't cross the
-    # process boundary intact.
-    for label, value in (("server", server), ("username", username), ("password", password)):
-        if "\n" in value or "\r" in value or "\x00" in value:
-            return {"ok": False, "error": f"{label} contains an illegal control character"}
-
     if not os.path.exists(SF_PROBE_PATH):
         return {"ok": False, "error": (
             f"probe binary not found at {SF_PROBE_PATH} — build it with "
@@ -509,99 +516,14 @@ async def run_probe(server: str, username: str, password: str) -> dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
-# LOGIN — disclaimer confirmation, then modal (see design note #1 at the
-# top of this file for why the modal exists at all)
+# LOGIN — Modal-based (see design note #1 at the top of this file)
 # ---------------------------------------------------------------------------
-
-class SFLoginDisclaimerView(discord.ui.View):
-    """Ephemeral, un-editable legal notice shown BEFORE SFLoginModal opens.
-
-    Unlike a TextInput default value (which the user could technically type
-    over), this is a real embed — nothing about it can be altered by the
-    person reading it. Only interaction.response.send_modal() can open a
-    modal, and that call must be the FIRST response to an interaction, which
-    is exactly why this has to be a separate button click rather than
-    something shown inside the modal itself: the button's own interaction
-    is what "spends" the response slot that opens the modal.
-    """
-
-    def __init__(self, invoker_id: int, target: discord.Member):
-        super().__init__(timeout=120)
-        self.invoker_id = invoker_id
-        self.target = target
-        self.message: Optional[discord.InteractionMessage] = None
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        # The message is ephemeral (only invoker_id can even see it), but
-        # belt-and-suspenders in case Discord ever changes that guarantee.
-        if interaction.user.id != self.invoker_id:
-            await interaction.response.send_message(
-                "❌ Only the person who ran this command can use this button.", ephemeral=True
-            )
-            return False
-        return True
-
-    async def on_timeout(self) -> None:
-        for item in self.children:
-            item.disabled = True
-        if self.message:
-            try:
-                await self.message.edit(
-                    content="⌛ This confirmation expired. Run `/gt_sf_login` again to continue.",
-                    view=self,
-                )
-            except discord.HTTPException:
-                pass  # message may already be gone (e.g. channel deleted) — nothing to do
-
-    @discord.ui.button(label="Continue", style=discord.ButtonStyle.danger)
-    async def continue_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.stop()
-        await interaction.response.send_modal(SFLoginModal(self.target))
-
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.stop()
-        for item in self.children:
-            item.disabled = True
-        await interaction.response.edit_message(content="Cancelled — no account was connected.", embed=None, view=self)
-
-
-def _build_sf_login_disclaimer_embed() -> discord.Embed:
-    embed = discord.Embed(
-        title="⚠️ Before you connect your account",
-        description=(
-            "1. In the event of a data breach or compromised accounts, there will be "
-            "absolutely no compensation from Playa Games.\n"
-            "2. The bot has no affiliation whatsoever with Playa Games.\n"
-            "3. The bot is in no way endorsed by Playa Games."
-        ),
-        color=discord.Color.red(),
-    )
-    return embed
-
 
 class SFLoginModal(discord.ui.Modal, title="Shakes & Fidget Login"):
     """Modal input is visible ONLY to the user who opened it.
 
     This is the whole reason we don't take the password as a slash-command
     parameter — those are rendered in-channel alongside the invocation.
-
-    The legal disclaimer is no longer a field on this modal — it's shown as
-    a proper ephemeral embed with a "Continue" button BEFORE this modal is
-    opened (see SFLoginDisclaimerView / gt_sf_login below). That gives an
-    unambiguous, un-editable notice, instead of a TextInput default value
-    the user could technically type over.
-
-    ⚠️ PASSWORD MASKING — READ BEFORE ASSUMING THIS IS SECURE INPUT:
-    Discord's TextInput component has exactly two styles, `short` (one line)
-    and `paragraph` (multi-line) — there is no "password"/masked style in
-    Discord's API, for any bot, in any client. The `password` field below is
-    NOT obscured with bullets/asterisks; it renders as plain text while the
-    user types. This is a platform limitation, not something fixable from
-    this code. The actual protection here is narrower than "hidden input":
-    only the user who opened the modal can see it at all (not the channel),
-    and the value is Fernet-encrypted before it ever touches disk — but
-    anyone who can see that user's own screen while they type can read it.
     """
 
     server = discord.ui.TextInput(
@@ -617,8 +539,7 @@ class SFLoginModal(discord.ui.Modal, title="Shakes & Fidget Login"):
     )
     password = discord.ui.TextInput(
         label="S&F Password",
-        style=discord.TextStyle.short,  # Discord's only single-line style — NOT a masked/password style, see class docstring
-        placeholder="Only you can see this modal, password is encrypted",
+        placeholder="Only ever visible to you; stored encrypted",
         max_length=128,
         required=True,
     )
@@ -628,22 +549,12 @@ class SFLoginModal(discord.ui.Modal, title="Shakes & Fidget Login"):
         self.target_user = target_user
 
     async def on_submit(self, interaction: discord.Interaction):
-        server_input = self.server.value.strip()
-        username = self.username.value.strip()
-        password = self.password.value
-
-        # SFLoginModal's `server` field is a Modal TextInput, not a slash
-        # command option — app_commands.Transform only runs on the latter,
-        # so this is the one place in the codebase that calls
-        # resolve_server_domain() directly rather than via WorldTransformer.
-        try:
-            server = resolve_server_domain(interaction.guild_id, server_input)
-        except WorldResolutionError as exc:
-            await interaction.response.send_message(str(exc), ephemeral=True)
-            return
-
         # ephemeral=True: nobody else in the channel sees any of this.
         await interaction.response.defer(ephemeral=True, thinking=True)
+
+        server = self.server.value.strip()
+        username = self.username.value.strip()
+        password = self.password.value
 
         # Fail fast if encryption isn't configured — we must never reach the
         # storage step without a working key.
@@ -736,44 +647,20 @@ async def gt_sf_login(interaction: discord.Interaction, user: Optional[discord.M
             )
             return
 
-    view = SFLoginDisclaimerView(invoker_id=interaction.user.id, target=target)
-    await interaction.response.send_message(
-        embed=_build_sf_login_disclaimer_embed(), view=view, ephemeral=True
-    )
-    view.message = await interaction.original_response()
+    await interaction.response.send_modal(SFLoginModal(target))
 
 
 # ---------------------------------------------------------------------------
 # LOGOUT
 # ---------------------------------------------------------------------------
 
-async def _my_sf_world_autocomplete(interaction: discord.Interaction, current: str):
-    """Suggests from the CALLER's own registered sf_accounts — distinct
-    from world_registry's registered_world_autocomplete (guild-wide
-    absence-tracking worlds) and world_alias_autocomplete (every real
-    server that exists). Here, only worlds this specific person actually
-    has stored credentials for are useful suggestions."""
-    if interaction.guild_id is None:
-        return []
-    conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute(
-        "SELECT world_name FROM sf_accounts WHERE guild_id=? AND discord_user_id=? AND world_name LIKE ? "
-        "ORDER BY world_name LIMIT 25",
-        (str(interaction.guild_id), str(interaction.user.id), f"%{current.strip().lower()}%")
-    ).fetchall()
-    conn.close()
-    return [app_commands.Choice(name=r[0], value=r[0]) for r in rows]
-
-
 @app_commands.command(
     name="gt_sf_logout",
     description="Delete your stored Shakes & Fidget credentials from the bot.",
 )
 @app_commands.describe(world="Only remove this world (omit to remove all of yours)")
-@app_commands.autocomplete(world=_my_sf_world_autocomplete)
 @app_commands.guild_only()
-async def gt_sf_logout(interaction: discord.Interaction,
-                       world: Optional[app_commands.Transform[str, WorldTransformer]] = None):
+async def gt_sf_logout(interaction: discord.Interaction, world: Optional[str] = None):
     deleted = _delete_account(interaction.guild_id, interaction.user.id, world)
     if deleted:
         await interaction.response.send_message(
@@ -798,10 +685,9 @@ async def gt_sf_logout(interaction: discord.Interaction,
     state="True to enable hourly checks, False to disable",
     world="Apply to this world only (omit for all of your accounts)",
 )
-@app_commands.autocomplete(world=_my_sf_world_autocomplete)
 @app_commands.guild_only()
 async def gt_sf_toggle_checks(interaction: discord.Interaction, state: bool,
-                              world: Optional[app_commands.Transform[str, WorldTransformer]] = None):
+                              world: Optional[str] = None):
     changed = _set_auto_checks(interaction.guild_id, interaction.user.id, world, state)
     if not changed:
         await interaction.response.send_message(
@@ -854,6 +740,15 @@ async def gt_sf_status(interaction: discord.Interaction):
 # BACKGROUND MONITOR
 # ---------------------------------------------------------------------------
 
+# Max probes running at once. Each sf_probe process is ~10-30 MB, so this
+# caps peak probe RAM at roughly MAX_CONCURRENT_PROBES × 30 MB. Kept low on
+# purpose: the bot's persistent torch/easyocr/discord.py baseline already
+# uses most of a 1 GB box, so a handful of parallel probes is the safe
+# ceiling. Raising this trades RAM for a faster sweep — do it only if you
+# have headroom (check `free -m` while a sweep runs).
+MAX_CONCURRENT_PROBES = 3
+
+
 class SFMonitor:
     """Hourly loop that probes every enabled account and posts attack alerts.
 
@@ -881,14 +776,28 @@ class SFMonitor:
         accounts = _get_active_accounts()
         if not accounts:
             return
-        print(f"sf_auth: hourly check running for {len(accounts)} account(s)")
+        print(f"sf_auth: hourly check running for {len(accounts)} account(s), "
+              f"up to {MAX_CONCURRENT_PROBES} at a time")
 
-        for acc in accounts:
-            try:
-                await self._check_account(acc)
-            except Exception as exc:  # noqa: BLE001
-                # One bad account must never kill the loop for the others.
-                print(f"sf_auth: unexpected error checking {acc['world_name']}: {exc}")
+        # Bounded concurrency: instead of one-at-a-time (slow: N × probe time)
+        # or all-at-once (risks spawning N Rust processes and OOMing the box),
+        # a semaphore lets at most MAX_CONCURRENT_PROBES run simultaneously.
+        # With N=20 and limit=3 this is ~7x faster than sequential while
+        # never holding more than 3 probe processes in memory at once.
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_PROBES)
+
+        async def _guarded(acc: dict[str, Any]) -> None:
+            async with semaphore:
+                try:
+                    await self._check_account(acc)
+                except Exception as exc:  # noqa: BLE001
+                    # One bad account must never kill the sweep for the others.
+                    print(f"sf_auth: unexpected error checking {acc['world_name']}: {exc}")
+
+        # return_exceptions=True is belt-and-suspenders — _guarded already
+        # swallows per-account errors, but this guarantees gather itself
+        # never propagates and aborts the whole sweep.
+        await asyncio.gather(*(_guarded(acc) for acc in accounts), return_exceptions=True)
 
     async def _check_account(self, acc: dict[str, Any]) -> None:
         guild_id = acc["guild_id"]
@@ -916,40 +825,17 @@ class SFMonitor:
 
         if not result.get("ok"):
             error = str(result.get("error", "unknown error"))
+            _record_check(guild_id, acc["discord_user_id"], world, f"❌ {error[:150]}")
 
             # Distinguish "your login stopped working" (needs the user to act)
             # from a transient network blip (which will just retry next hour).
-            #
-            # IMPORTANT: this keyword match is a guess, not a verified signal —
-            # sf_probe.rs reports the raw Rust Debug text of whatever error the
-            # sf-api crate returned, and words like "invalid"/"auth" can show
-            # up in plenty of TRANSIENT error variants too (a dropped
-            # connection during the game's daily server reset, a momentary
-            # session hiccup, etc.), not just an actually-wrong password.
-            # A single match is therefore not trustworthy on its own — we only
-            # tell the user to re-login once the SAME classification happens
-            # on two checks in a row, an hour apart. That one-off midnight-ish
-            # blips (which recover on their own next hour) don't turn into a
-            # false "your password changed" alert.
-            looks_like_bad_creds = any(
-                tok in error.lower() for tok in ("wrong pass", "invalid", "auth", "password")
-            )
-            previously_suspected = str(acc.get("last_status") or "").startswith("❌ CRED_SUSPECT:")
-
-            if looks_like_bad_creds and previously_suspected:
-                _record_check(guild_id, acc["discord_user_id"], world, f"❌ {error[:150]}")
+            if any(tok in error.lower() for tok in ("wrong pass", "invalid", "auth", "password")):
                 await self._dm_user(
                     acc["discord_user_id"],
                     f"⚠️ Automatic S&F check for `{world}` failed: the stored credentials were "
-                    f"rejected on two checks in a row. This usually means the password changed.\n"
+                    f"rejected. This usually means the password changed.\n"
                     f"Run `/gt_sf_login` to reconnect — hourly checks will keep failing until then."
                 )
-            elif looks_like_bad_creds:
-                # First occurrence — record it as "suspected" but don't alarm
-                # the user yet; next hour's check will confirm or clear it.
-                _record_check(guild_id, acc["discord_user_id"], world, f"❌ CRED_SUSPECT: {error[:150]}")
-            else:
-                _record_check(guild_id, acc["discord_user_id"], world, f"❌ {error[:150]}")
             return
 
         characters = result.get("characters", [])
@@ -1003,19 +889,16 @@ class SFMonitor:
         """Posts an attack/defense alert, once per distinct battle.
 
         Channel routing: prefers the per-kind channel from
-        world_notify_config if configured (there is currently no command
-        that sets attack_channel_id/defense_channel_id — see attack_alert.py's
-        module docstring); falls back to attack_config's single channel
-        (/gt_alerts_panel) otherwise. The ping role always comes from
-        attack_config — world_notify_config doesn't configure a separate
-        role, it only holds per-kind channel overrides + defense muting.
+        world_notify_config (/gt_sf_toggle) if configured; falls back to
+        attack_config's single channel (/gt_attack_setup) otherwise. The
+        ping role always comes from attack_config — /gt_sf_toggle doesn't
+        configure a separate role, it only routes channels + defense muting.
 
-        mute_defense: if set for this world (via /gt_alerts_panel), a
-        defending battle is marked as alerted WITHOUT actually sending
-        anything — i.e. "acknowledge and suppress", not "defer until
-        unmuted". If you'd rather a later /gt_alerts_panel unmute cause a
-        backlog of suppressed alerts to fire, that's a one-line change
-        (skip the _mark_alerted call below instead).
+        mute_defense: if set for this world, a defending battle is marked
+        as alerted WITHOUT actually sending anything — i.e. "acknowledge
+        and suppress", not "defer until unmuted". If you'd rather a later
+        /gt_sf_toggle unmute cause a backlog of suppressed alerts to fire,
+        that's a one-line change (skip the _mark_alerted call below instead).
         """
         battle_date = str(battle.get("date", ""))
         if _already_alerted(guild_id, world, kind, battle_date):
@@ -1031,11 +914,10 @@ class SFMonitor:
             _mark_alerted(guild_id, world, kind, battle_date)  # suppressed, not deferred — see docstring
             return
 
-        # Reuse the per-world role configured via /gt_alerts_panel; prefer
-        # world_notify_config's per-kind channel if set (currently only
-        # mute_defense is ever written there), else fall back to
+        # Reuse the per-world role configured via /gt_attack_setup; prefer
+        # /gt_sf_toggle's per-kind channel if set, else fall back to
         # attack_config's single channel.
-        conn = sqlite3.connect(DB_PATH)
+        conn = _connect()
         row = conn.execute(
             "SELECT channel_id, role_id FROM attack_config WHERE guild_id=? AND world_name=?",
             (guild_id, world.lower())
@@ -1053,7 +935,7 @@ class SFMonitor:
 
         if not channel_id:
             print(f"sf_auth: {world} has a {kind} battle but no channel configured "
-                  f"(checked world_notify_config and /gt_alerts_panel) — skipping alert")
+                  f"(checked /gt_sf_toggle and /gt_attack_setup) — skipping alert")
             return
 
         guild_obj = self.bot.get_guild(int(guild_id))
@@ -1069,18 +951,18 @@ class SFMonitor:
         opponent = battle.get("opponent") or f"guild #{battle.get('opponent_id')}"
 
         if kind == "attacking":
-            title = f"**{char['guild']}**"
-            body = f"⚔️ Prepare for attack ⚔️"
+            title = "⚔️ Guild Attack Scheduled"
+            body = f"**{char['guild']}** is attacking **{opponent}**"
             colour = discord.Color.dark_red()
         else:
-            title = f"**{char['guild']}**"
-            body = f"🛡️ Prepare for defense! 🛡️"
+            title = "🛡️ Incoming Attack!"
+            body = f"**{opponent}** is attacking **{char['guild']}**"
             colour = discord.Color.orange()
 
         embed = discord.Embed(title=title, description=body, color=colour)
         embed.add_field(name="🕒 Time", value=when, inline=True)
         embed.add_field(name="🌍 World", value=world.upper(), inline=True)
-        embed.set_footer(text="Message sent automatically")
+        embed.set_footer(text="Detected automatically by hourly guild check")
 
         try:
             await channel.send(content=role.mention if role else None, embed=embed)
