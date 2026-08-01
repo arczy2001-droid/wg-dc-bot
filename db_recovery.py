@@ -21,22 +21,22 @@ def check_and_fix_world():
         for row in rows:
             print(f"Znaleziono: {row}")
 
-    print("\n--- NAPRAWA ---")
+    print("\n--- NAPRAWA / DODAWANIE ---")
     
-    # Podstaw tutaj dane
-    nazwa_swiata = "eu20a"
-    kanal_id = "123456789012345678"  # <--- ID KANAŁU
-    # Jeśli 3. kolumna to np. 'sf_server', dopisz jej wartość poniżej:
-    trzecia_wartosc = None 
+    # Zaktualizowane zbieranie danych na podstawie Twojego zrzutu ekranu
+    print("Wprowadź dane dla nowego wpisu:")
+    id_wpisu = input("1. ID (np. 1307435047460016200): ")
+    sf_serwer = input("2. Serwer SF (np. s20.sfgame.eu): ")
+    kanal_id = input("3. ID Kanału Discord (np. 1518999708553445490): ")
     
-    confirm = input(f"Czy chcesz dodać/nadpisać świat '{nazwa_swiata}'? (t/n): ")
+    confirm = input(f"\nCzy chcesz dodać/nadpisać wpis '{id_wpisu} | {sf_serwer}'? (t/n): ")
     
     if confirm.lower() == 't':
         try:
-            # Wstawiamy 3 wartości. Jeśli 3. kolumna to tekst, możesz wpisać tam np. "s20" zamiast None
-            cursor.execute("INSERT OR REPLACE INTO swiaty VALUES (?, ?, ?)", (nazwa_swiata, kanal_id, trzecia_wartosc))
+            # Wstawiamy 3 wartości zgodnie ze strukturą bazy
+            cursor.execute("INSERT OR REPLACE INTO swiaty VALUES (?, ?, ?)", (id_wpisu, sf_serwer, kanal_id))
             conn.commit()
-            print(f"✅ Świat {nazwa_swiata} został poprawnie dodany/zaktualizowany.")
+            print(f"✅ Wpis został poprawnie dodany/zaktualizowany.")
         except Exception as e:
             print(f"❌ Błąd podczas zapisu: {e}")
     else:
