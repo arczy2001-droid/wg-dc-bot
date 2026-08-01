@@ -119,7 +119,7 @@ WORLD_ALIASES: dict[str, str] = {
     "eu18": "s18.sfgame.eu",
     "eu19": "s19.sfgame.eu",
     "eu20": "s20.sfgame.eu",
-    "eu20a": "eu20a.sfgame.eu",
+    "eu20a": "s20a.sfgame.eu",
     "eu21": "s21.sfgame.eu",
     "eu22": "s22.sfgame.eu",
     "eu23": "s23.sfgame.eu",
