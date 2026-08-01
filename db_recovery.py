@@ -4,27 +4,37 @@ def check_and_fix_world():
     conn = sqlite3.connect("gildia.db")
     cursor = conn.cursor()
 
-    print("--- AKTUALNA LISTA ŚWIATÓW W BAZIE ---")
-    cursor.execute("SELECT nazwa, kanal_id FROM swiaty")
+    # 1. Sprawdzenie struktury tabeli
+    print("--- STRUKTURA TABELI 'swiaty' ---")
+    cursor.execute("PRAGMA table_info(swiaty)")
+    columns = cursor.fetchall()
+    for col in columns:
+        print(f"Kolumna: {col[1]} (Typ: {col[2]})")
+    
+    print("\n--- AKTUALNA LISTA ŚWIATÓW W BAZIE ---")
+    cursor.execute("SELECT * FROM swiaty")
     rows = cursor.fetchall()
     
     if not rows:
         print("Baza światów jest pusta!")
     else:
         for row in rows:
-            print(f"Znaleziono: {row[0]} -> Kanał ID: {row[1]}")
+            print(f"Znaleziono: {row}")
 
     print("\n--- NAPRAWA ---")
     
-    # Dane dla brakującego świata (podstaw tutaj właściwe ID kanału)
+    # Podstaw tutaj dane
     nazwa_swiata = "eu20a"
-    kanal_id = "123456789012345678"  # <--- PODMIEŃ NA ID KANAŁU DLA AKADEMII
+    kanal_id = "123456789012345678"  # <--- ID KANAŁU
+    # Jeśli 3. kolumna to np. 'sf_server', dopisz jej wartość poniżej:
+    trzecia_wartosc = None 
     
-    confirm = input(f"Czy chcesz dodać/nadpisać świat '{nazwa_swiata}' z kanałem {kanal_id}? (t/n): ")
+    confirm = input(f"Czy chcesz dodać/nadpisać świat '{nazwa_swiata}'? (t/n): ")
     
     if confirm.lower() == 't':
         try:
-            cursor.execute("INSERT OR REPLACE INTO swiaty VALUES (?, ?)", (nazwa_swiata, kanal_id))
+            # Wstawiamy 3 wartości. Jeśli 3. kolumna to tekst, możesz wpisać tam np. "s20" zamiast None
+            cursor.execute("INSERT OR REPLACE INTO swiaty VALUES (?, ?, ?)", (nazwa_swiata, kanal_id, trzecia_wartosc))
             conn.commit()
             print(f"✅ Świat {nazwa_swiata} został poprawnie dodany/zaktualizowany.")
         except Exception as e:
