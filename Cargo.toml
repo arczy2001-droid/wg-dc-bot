@@ -23,3 +23,7 @@ tokio = { version = "1", features = ["full"] }
 
 # Masks password input in the terminal (used only by sf_login_check)
 rpassword = "7"
+
+[[bin]]
+name = "dump_report"
+path = "dump_report.rs"
