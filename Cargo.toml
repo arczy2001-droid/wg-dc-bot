@@ -17,6 +17,7 @@ path = "sf_probe.rs"
 [dependencies]
 # The real Shakes & Fidget API crate — https://github.com/the-marenga/sf-api
 sf-api = "0.4"
+base64 = "0.22"
 
 # Async runtime, required by sf-api's session/login calls
 tokio = { version = "1", features = ["full"] }
