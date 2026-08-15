@@ -17,12 +17,22 @@ FORMAT — validated against two independent real battles (different opponents,
 different absentees, both matched the in-game "Niezarejestrowani członkowie"
 screen exactly, including correctly NOT flagging a boundary player who fought):
 
-    messagetext.s: <type> / <OPPONENT_GUILD> / 1 / 5 / <player groups...>
-    each player group = flag / id / name / level / rank      (5 tokens)
+    messagetext.s: <type> / <OPPONENT_GUILD> / <player groups...>
+    each player group = flag / id / name / level / class     (5 tokens)
         flag == "1"  -> participated (present)
         flag == "0"  -> absent
-    Player groups begin at token index 7. The final group may be truncated
-    (missing the trailing 'rank' token) — handled explicitly.
+    <type> is the same code as in systemmessagelist: "2a" = guild attack,
+    "2d" = guild defense.
+
+    Player groups begin at token index 2. Verified arithmetically against a
+    real 50-member report: 252 tokens == 2 + 50*5 exactly, zero remainder,
+    and the group count equals the guild member count.
+
+    CORRECTED 2026-08: this previously used offset 7, which silently skipped
+    member #0 (the guild leader). Both earlier validations still matched
+    because that member had participated in both battles, so the omission was
+    invisible — but a leader who skips an attack would never be reported.
+    There is no truncated final group; that was an artifact of the bad offset.
 
     messagelist.r: <msg_id>,<sender>,<tab>,<subject>,<unix_ts>; ...
         used to find WHICH inbox entry is the attack report and to dedupe by
@@ -63,14 +73,18 @@ def parse_absent(messagetext_section: str) -> tuple[str, list[str]]:
     opponent = tokens[1]
     absent: list[str] = []
 
-    i = 7  # first player-group flag (validated offset)
+    # Player groups start immediately after <type>/<opponent>. Offset 2, not 7:
+    # offset 7 drops the first member from consideration entirely.
+    i = 2
     while i + 4 < len(tokens):
-        flag, _id, name, _lvl, _rank = tokens[i:i + 5]
+        flag, _id, name, _lvl, _cls = tokens[i:i + 5]
         if flag == "0":
             absent.append(name)
         i += 5
 
-    # Trailing group can be truncated to flag/id/name/level (no rank).
+    # A well-formed report divides exactly, so this should never fire. Kept as
+    # a guard: if the server ever sends a short final group, a leading "0"
+    # still means absent and the name is the third token.
     if i < len(tokens):
         rem = tokens[i:]
         if len(rem) >= 3 and rem[0] == "0":
