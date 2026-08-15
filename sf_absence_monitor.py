@@ -7,17 +7,37 @@ screenshot-OCR flow.
 HOW IT WORKS (fully automatic, no browser):
     Once an hour, for each registered world that has a sentry account, this:
       1. Runs the Rust `sf_report_probe` binary (same subprocess+stdin pattern
-         as sf_auth.py's status probe) which logs in via SSO, fetches the
-         newest guild ATTACK report over the raw protocol, and prints its
-         `messagetext.s` body as JSON.
-      2. Parses that body with sf_absence.parse_absent (validated against two
-         real battles) to get the opponent + list of absent members.
-      3. Dedupes by report content so the same battle is never posted twice.
-      4. Writes absences into `nieobecnosci` (+ a `raporty` marker) in the
-         SAME format the old /wg flow used, so rankings / /gt_absent_list etc.
-         keep working unchanged.
-      5. Posts a clean embed to that world's channel (`swiaty.kanal_id`) —
-         where the old /wg reports used to land.
+         as sf_auth.py's status probe). The probe logs in via SSO, reads
+         `systemmessagelist.r` out of the LOGIN response, and returns both the
+         newest battle report's body AND the full list of reports still held
+         by the server (~7 day retention).
+      2. Works out which of those reports have not been posted yet, and fetches
+         each missing one by msg_id (the probe accepts a msg_id on its 4th
+         stdin line).
+      3. Parses each body with sf_absence.parse_absent to get the opponent and
+         the list of members who did not sign up.
+      4. Writes absences into `nieobecnosci` (+ a `raporty` marker) in the SAME
+         format the old /wg flow used, so rankings / /gt_absent_list etc. keep
+         working unchanged.
+      5. Posts a clean embed to that world's channel (`swiaty.kanal_id`).
+
+WHY DEDUPE BY msg_id AND NOT BY CONTENT:
+    The previous version hashed (opponent, absent_names). Two separate battles
+    against the same guild with the same absentees would hash identically and
+    the second would be silently discarded as a duplicate. msg_id is a stable
+    server-side identifier, so it cannot collide across battles.
+
+WHY CATCH-UP EXISTS:
+    The probe returns one report body per run. Attack and defense reports can
+    arrive less than three hours apart (observed on s20), so an hourly loop
+    that only ever looked at the newest report would permanently lose the
+    older one. Reports live ~7 days, so anything missed is still fetchable.
+
+FIRST RUN BEHAVIOUR:
+    On the very first run for a world there is no history, and the server may
+    be holding 30+ old reports. Posting them all would flood the channel, so
+    the first run posts only the newest and marks the rest as seen. Set
+    BACKFILL_ON_FIRST_RUN = True to post everything instead.
 
 INTEGRATION (main.py setup_hook, after init_db and the other init_* calls):
 
@@ -34,7 +54,6 @@ with SF_REPORT_PROBE_PATH in .env). Build it with:
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import sqlite3
@@ -54,26 +73,72 @@ SF_REPORT_PROBE_PATH = os.getenv("SF_REPORT_PROBE_PATH", "./target/release/sf_re
 PROBE_TIMEOUT_SECONDS = 40  # a report fetch is 2 round-trips, allow a little more than status probe
 BATTLE_TYPE_CODES = ("2a", "2d")  # 2a = attack, 2d = defense
 
+# Which report kinds get written to `nieobecnosci`. The old /wg flow counted
+# ATTACK absences only, and the ranking queries do not distinguish kinds — so
+# including defense here would inflate everyone's absence count against a
+# historical baseline that never had it. Set to ("attack", "defense") if you
+# decide you want both.
+TRACKED_KINDS = ("attack",)
+
+# Safety cap on how many missed reports one run will post, so a long outage
+# cannot dump dozens of embeds into a channel at once. The rest stay unseen
+# and get picked up on subsequent runs.
+MAX_CATCHUP_PER_RUN = 5
+
+# See "FIRST RUN BEHAVIOUR" above.
+BACKFILL_ON_FIRST_RUN = False
+
 
 def _connect() -> sqlite3.Connection:
     return sqlite3.connect(DB_PATH, timeout=5.0)
 
 
 def init_absence_tables() -> None:
-    """Idempotent. Tracks which battle reports we've already posted so a
-    re-fetched report isn't posted twice."""
+    """Idempotent. Tracks which battle reports have already been posted.
+
+    MIGRATION: the original schema was keyed on a content hash
+    (guild_id, swiat, report_hash). That key collides across distinct battles
+    with identical opponent+absentees, so the table is rebuilt keyed on the
+    server-side msg_id instead. Old rows are carried over where they recorded
+    a usable msg_id; rows that only ever had a hash are dropped, which at worst
+    causes one already-seen report to be posted a second time.
+    """
     conn = _connect()
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS absence_reports_seen (
-            guild_id     TEXT NOT NULL,
-            swiat        TEXT NOT NULL,
-            report_hash  TEXT NOT NULL,
+    cols = conn.execute("PRAGMA table_info(absence_reports_seen)").fetchall()
+    pk_cols = {row[1] for row in cols if row[5]}
+
+    target_schema = """
+        CREATE TABLE absence_reports_seen (
+            guild_id     TEXT    NOT NULL,
+            swiat        TEXT    NOT NULL,
+            msg_id       INTEGER NOT NULL,
+            kind         TEXT,
             opponent     TEXT,
-            msg_id       INTEGER,
+            created_ts   INTEGER,
+            absent_count INTEGER,
             posted_at    TIMESTAMP NOT NULL,
-            PRIMARY KEY (guild_id, swiat, report_hash)
+            PRIMARY KEY (guild_id, swiat, msg_id)
         )
-    """)
+    """
+
+    if not cols:
+        conn.execute(target_schema)
+    elif pk_cols != {"guild_id", "swiat", "msg_id"}:
+        conn.execute("ALTER TABLE absence_reports_seen RENAME TO absence_reports_seen_old")
+        conn.execute(target_schema)
+        old_cols = {row[1] for row in
+                    conn.execute("PRAGMA table_info(absence_reports_seen_old)").fetchall()}
+        if "msg_id" in old_cols:
+            conn.execute("""
+                INSERT OR IGNORE INTO absence_reports_seen
+                    (guild_id, swiat, msg_id, opponent, posted_at)
+                SELECT guild_id, swiat, msg_id, opponent, posted_at
+                FROM absence_reports_seen_old
+                WHERE msg_id IS NOT NULL AND msg_id > 0
+            """)
+        conn.execute("DROP TABLE absence_reports_seen_old")
+        print("sf_absence: rebuilt absence_reports_seen keyed on msg_id")
+
     conn.commit()
     conn.close()
 
@@ -101,39 +166,57 @@ def _get_monitored_worlds() -> list[dict[str, Any]]:
     ]
 
 
-def _report_hash(opponent: str, absent: list[str]) -> str:
-    key = opponent + "|" + "|".join(sorted(absent))
-    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
+def _seen_msg_ids(guild_id: str, swiat: str) -> set[int]:
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT msg_id FROM absence_reports_seen WHERE guild_id=? AND swiat=?",
+        (guild_id, swiat),
+    ).fetchall()
+    conn.close()
+    return {int(r[0]) for r in rows}
 
 
-def _already_posted(guild_id: str, swiat: str, report_hash: str) -> bool:
+def _has_history(guild_id: str, swiat: str) -> bool:
     conn = _connect()
     row = conn.execute(
-        "SELECT 1 FROM absence_reports_seen WHERE guild_id=? AND swiat=? AND report_hash=?",
-        (guild_id, swiat, report_hash),
+        "SELECT 1 FROM absence_reports_seen WHERE guild_id=? AND swiat=? LIMIT 1",
+        (guild_id, swiat),
     ).fetchone()
     conn.close()
     return row is not None
 
 
-def _mark_posted(guild_id: str, swiat: str, report_hash: str, opponent: str, msg_id: int) -> None:
+def _mark_seen(guild_id: str, swiat: str, msg_id: int, kind: str = "",
+               opponent: str = "", created_ts: int = 0, absent_count: int = 0) -> None:
     conn = _connect()
     conn.execute(
         """INSERT OR IGNORE INTO absence_reports_seen
-           (guild_id, swiat, report_hash, opponent, msg_id, posted_at)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (guild_id, swiat, report_hash, opponent, msg_id,
+           (guild_id, swiat, msg_id, kind, opponent, created_ts, absent_count, posted_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (guild_id, swiat, int(msg_id), kind, opponent, int(created_ts), int(absent_count),
          datetime.now(timezone.utc).isoformat()),
     )
     conn.commit()
     conn.close()
 
 
-def _write_absences(guild_id: str, swiat: str, absent: list[str]) -> None:
+def _write_absences(guild_id: str, swiat: str, absent: list[str], created_ts: int) -> str:
     """Insert rows in the SAME format the old /wg flow used, so existing
-    ranking/query code keeps working unchanged."""
+    ranking/query code keeps working unchanged.
+
+    data_raportu is ISO (%Y-%m-%d) — this is what main.py's _parse_report_date
+    produces and what every date-based query and cleanup path compares against.
+    (The previous version wrote %d.%m.%Y here, which silently made these rows
+    invisible to /gt_report_delete and the date filters.)
+
+    The date comes from the report's own creation timestamp, not from now(),
+    so a report caught up days late is still filed under the day it happened.
+    """
+    battle_dt = datetime.fromtimestamp(created_ts) if created_ts else datetime.now()
+    data_raportu = battle_dt.strftime("%Y-%m-%d")
     now = datetime.now()
-    data_raportu = now.strftime("%d.%m.%Y")
+    swiat = swiat.lower()
+
     conn = _connect()
     conn.execute(
         "INSERT INTO raporty (guild_id, swiat, data_raportu, data_wpisu) VALUES (?, ?, ?, ?)",
@@ -147,15 +230,20 @@ def _write_absences(guild_id: str, swiat: str, absent: list[str]) -> None:
         )
     conn.commit()
     conn.close()
+    return data_raportu
 
 
 # ---------------------------------------------------------------------------
 # Probe runner (mirrors sf_auth.run_probe exactly)
 # ---------------------------------------------------------------------------
 
-async def run_report_probe(server: str, username: str, password: str) -> dict[str, Any]:
+async def run_report_probe(server: str, username: str, password: str,
+                           msg_id: int | None = None) -> dict[str, Any]:
     """Run sf_report_probe, return parsed JSON. Password goes via stdin, never
-    argv. Always returns a dict with at least {"ok": bool}."""
+    argv. Always returns a dict with at least {"ok": bool}.
+
+    msg_id pins a specific report (4th stdin line); omit it for the newest.
+    """
     if not os.path.exists(SF_REPORT_PROBE_PATH):
         return {"ok": False, "error": (
             f"probe binary not found at {SF_REPORT_PROBE_PATH} — build it with "
@@ -168,7 +256,8 @@ async def run_report_probe(server: str, username: str, password: str) -> dict[st
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        payload = f"{server}\n{username}\n{password}\n".encode("utf-8")
+        fourth = "" if msg_id is None else str(int(msg_id))
+        payload = f"{server}\n{username}\n{password}\n{fourth}\n".encode("utf-8")
         stdout, stderr = await asyncio.wait_for(
             proc.communicate(payload), timeout=PROBE_TIMEOUT_SECONDS
         )
@@ -191,8 +280,9 @@ async def run_report_probe(server: str, username: str, password: str) -> dict[st
 # Embed
 # ---------------------------------------------------------------------------
 
-def _build_embed(swiat: str, opponent: str, absent: list[str], kind: str = "attack") -> discord.Embed:
-    when = datetime.now().strftime("%Y-%m-%d %H:%M")
+def _build_embed(swiat: str, opponent: str, absent: list[str], kind: str = "attack",
+                 battle_ts: int = 0) -> discord.Embed:
+    when = (datetime.fromtimestamp(battle_ts) if battle_ts else datetime.now()).strftime("%Y-%m-%d %H:%M")
     # Polish labels; attack vs defense.
     if kind == "defense":
         icon, label = "🛡️", "obronie"
@@ -210,7 +300,7 @@ def _build_embed(swiat: str, opponent: str, absent: list[str], kind: str = "atta
     )
     embed.add_field(name="Przeciwnik", value=opponent or "—", inline=True)
     embed.add_field(name="Nieobecnych", value=str(len(absent)), inline=True)
-    embed.set_footer(text=f"Automatyczny raport • {when}")
+    embed.set_footer(text=f"Bitwa: {when} • raport automatyczny")
     return embed
 
 
@@ -251,56 +341,122 @@ class AbsenceMonitor:
     async def _check_world(self, w: dict[str, Any]) -> None:
         await self.check_world_once(w)
 
+    async def _resolve_channel(self, kanal_id: str):
+        channel = self.bot.get_channel(int(kanal_id))
+        if channel is None:
+            channel = await self.bot.fetch_channel(int(kanal_id))
+        return channel
+
     async def check_world_once(self, w: dict[str, Any]) -> dict[str, Any]:
-        """Run the full pipeline for one world. Returns a result dict so a
-        manual command can report what happened:
-            {"status": "posted"|"duplicate"|"no_report"|"error"|"not_attack",
-             "opponent": str, "absent": [str], "detail": str}
+        """Run the full pipeline for one world, posting every battle report
+        that has not been posted yet (oldest first).
+
+        Returns:
+            {"status": "posted"|"duplicate"|"no_report"|"error",
+             "posted": [ {msg_id, kind, opponent, absent, data_raportu}, ... ],
+             "skipped": int,      # unseen reports left for a later run
+             "detail": str}
         """
         try:
             password = decrypt_password(w["password_enc"])
         except Exception as exc:  # noqa: BLE001
-            return {"status": "error", "detail": f"cannot decrypt sentry password: {exc}"}
+            return {"status": "error", "posted": [], "skipped": 0,
+                    "detail": f"cannot decrypt sentry password: {exc}"}
 
-        result = await run_report_probe(w["swiat"], w["sf_username"], password)
-        del password
+        guild_id, swiat = w["guild_id"], w["swiat"]
 
-        if not result.get("ok"):
-            return {"status": "no_report", "detail": result.get("error", "no report")}
+        try:
+            first = await run_report_probe(swiat, w["sf_username"], password)
+            if not first.get("ok"):
+                return {"status": "no_report", "posted": [], "skipped": 0,
+                        "detail": first.get("error", "no report")}
 
-        body = result.get("body", "")
-        section = extract_section(body, "messagetext.s")
-        type_code = section.split("/", 1)[0] if section else ""
-        if not section or type_code not in BATTLE_TYPE_CODES:
-            return {"status": "not_attack", "detail": "latest report was not a battle report"}
+            reports = [r for r in first.get("reports", [])
+                       if r.get("kind") in TRACKED_KINDS]
+            if not reports:
+                return {"status": "no_report", "posted": [], "skipped": 0,
+                        "detail": f"server holds no {'/'.join(TRACKED_KINDS)} reports"}
 
-        # kind comes from the probe ("attack"/"defense"); fall back to type code.
-        kind = result.get("kind") or ("defense" if type_code == "2d" else "attack")
-        opponent, absent = parse_absent(section)
-        rhash = _report_hash(opponent, absent)
+            seen = _seen_msg_ids(guild_id, swiat)
+            unseen = [r for r in reports if int(r["msg_id"]) not in seen]
+            # Oldest first, so the channel reads chronologically.
+            unseen.sort(key=lambda r: int(r.get("created", 0)))
 
-        if _already_posted(w["guild_id"], w["swiat"], rhash):
-            return {"status": "duplicate", "opponent": opponent, "absent": absent,
-                    "kind": kind, "detail": "this battle was already posted"}
+            if not unseen:
+                newest = reports[0]
+                return {"status": "duplicate", "posted": [], "skipped": 0,
+                        "detail": f"newest report (msg_id {newest['msg_id']}) already posted"}
 
-        channel = self.bot.get_channel(int(w["kanal_id"]))
-        if channel is None:
+            # First run for this world: post only the newest, mark the backlog
+            # as seen so the channel does not get flooded with old battles.
+            if not BACKFILL_ON_FIRST_RUN and not _has_history(guild_id, swiat):
+                backlog, unseen = unseen[:-1], unseen[-1:]
+                for r in backlog:
+                    _mark_seen(guild_id, swiat, int(r["msg_id"]), r.get("kind", ""),
+                               "", int(r.get("created", 0)), 0)
+                if backlog:
+                    print(f"sf_absence: {swiat} first run — marked {len(backlog)} "
+                          f"old report(s) as seen without posting")
+
+            skipped = max(0, len(unseen) - MAX_CATCHUP_PER_RUN)
+            unseen = unseen[:MAX_CATCHUP_PER_RUN]
+
+            channel = None
             try:
-                channel = await self.bot.fetch_channel(int(w["kanal_id"]))
+                channel = await self._resolve_channel(w["kanal_id"])
             except Exception:  # noqa: BLE001
-                return {"status": "error", "opponent": opponent, "absent": absent,
+                return {"status": "error", "posted": [], "skipped": 0,
                         "detail": f"channel {w['kanal_id']} not found"}
 
-        _write_absences(w["guild_id"], w["swiat"], absent)
-        try:
-            await channel.send(embed=_build_embed(w["swiat"], opponent, absent, kind))
-        except discord.DiscordException as exc:
-            return {"status": "error", "opponent": opponent, "absent": absent,
-                    "kind": kind, "detail": f"failed to post: {exc}"}
-        _mark_posted(w["guild_id"], w["swiat"], rhash, opponent, int(result.get("msg_id", 0)))
-        print(f"sf_absence: posted {w['swiat']} {kind} vs {opponent} ({len(absent)} absent)")
-        return {"status": "posted", "opponent": opponent, "absent": absent,
-                "kind": kind, "detail": f"posted to <#{w['kanal_id']}>"}
+            posted: list[dict[str, Any]] = []
+            for r in unseen:
+                msg_id = int(r["msg_id"])
+                created = int(r.get("created", 0))
+                kind = r.get("kind", "attack")
+
+                # The newest report's body already came back with the first
+                # probe call — only re-run the probe for the older ones.
+                if msg_id == int(first.get("msg_id", -1)):
+                    body = first.get("body", "")
+                else:
+                    again = await run_report_probe(swiat, w["sf_username"], password,
+                                                   msg_id=msg_id)
+                    if not again.get("ok"):
+                        print(f"sf_absence: {swiat} could not fetch msg_id {msg_id}: "
+                              f"{again.get('error')}")
+                        continue
+                    body = again.get("body", "")
+
+                section = extract_section(body, "messagetext.s")
+                type_code = section.split("/", 1)[0] if section else ""
+                if not section or type_code not in BATTLE_TYPE_CODES:
+                    print(f"sf_absence: {swiat} msg_id {msg_id} had no battle body, skipping")
+                    continue
+
+                opponent, absent = parse_absent(section)
+                data_raportu = _write_absences(guild_id, swiat, absent, created)
+                try:
+                    await channel.send(embed=_build_embed(swiat, opponent, absent, kind, created))
+                except discord.DiscordException as exc:
+                    return {"status": "error", "posted": posted, "skipped": skipped,
+                            "detail": f"failed to post msg_id {msg_id}: {exc}"}
+
+                _mark_seen(guild_id, swiat, msg_id, kind, opponent, created, len(absent))
+                posted.append({"msg_id": msg_id, "kind": kind, "opponent": opponent,
+                               "absent": absent, "data_raportu": data_raportu})
+                print(f"sf_absence: posted {swiat} {kind} vs {opponent} "
+                      f"({len(absent)} absent, msg_id {msg_id})")
+        finally:
+            del password
+
+        if not posted:
+            return {"status": "no_report", "posted": [], "skipped": skipped,
+                    "detail": "found unposted reports but none produced a usable body"}
+
+        detail = f"posted {len(posted)} report(s) to <#{w['kanal_id']}>"
+        if skipped:
+            detail += f"; {skipped} more will follow next run"
+        return {"status": "posted", "posted": posted, "skipped": skipped, "detail": detail}
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +484,7 @@ def _get_one_world(guild_id: str, swiat: str) -> dict[str, Any] | None:
 
 @app_commands.command(
     name="gt_absence_check",
-    description="Manually fetch the latest guild attack report now and post absences (for testing).",
+    description="Manually fetch new guild battle reports now and post absences (for testing).",
 )
 @app_commands.checks.has_permissions(manage_guild=True)
 @app_commands.autocomplete(swiat=registered_world_autocomplete)
@@ -358,29 +514,26 @@ async def gt_absence_check(
 
     res = await monitor.check_world_once(w)
     status = res.get("status")
-    opponent = res.get("opponent", "—")
-    absent = res.get("absent", [])
+    posted = res.get("posted", [])
     detail = res.get("detail", "")
 
     if status == "posted":
-        names = ", ".join(absent) if absent else "nobody — everyone participated"
+        lines = []
+        for p in posted:
+            names = ", ".join(p["absent"]) if p["absent"] else "nobody — everyone participated"
+            lines.append(
+                f"**{p['data_raportu']}** ({p['kind']}) vs **{p['opponent']}** — "
+                f"{len(p['absent'])}: {names}"
+            )
         await interaction.followup.send(
-            f"✅ Fetched and posted the latest attack report for **{swiat}**.\n"
-            f"**Opponent:** {opponent}\n**Absent ({len(absent)}):** {names}\n{detail}",
+            f"✅ Posted {len(posted)} report(s) for **{swiat}**.\n" + "\n".join(lines) +
+            f"\n{detail}",
             ephemeral=True,
         )
     elif status == "duplicate":
-        names = ", ".join(absent) if absent else "nobody"
         await interaction.followup.send(
-            f"ℹ️ The latest report for **{swiat}** was already posted, so it wasn't re-posted.\n"
-            f"**Opponent:** {opponent}\n**Absent ({len(absent)}):** {names}\n"
-            f"_(The parser is working — this just means no new battle since last time.)_",
-            ephemeral=True,
-        )
-    elif status == "not_attack":
-        await interaction.followup.send(
-            f"ℹ️ The newest report for **{swiat}** isn't an attack report ({detail}). "
-            f"Nothing to post right now.",
+            f"ℹ️ Nothing new for **{swiat}** — {detail}.\n"
+            f"_(The pipeline is working; this just means no new battle since last time.)_",
             ephemeral=True,
         )
     elif status == "no_report":
