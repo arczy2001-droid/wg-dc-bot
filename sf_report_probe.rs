@@ -1,23 +1,23 @@
 // ============================================================================
-// sf_report_probe.rs — machine-readable guild ATTACK report probe
+// sf_report_probe.rs — machine-readable guild ATTACK/DEFENSE report probe
 // ----------------------------------------------------------------------------
-// Fetches the latest guild attack battle report for an account and prints its
-// raw `messagetext.s` body as JSON on stdout, so the Python side
+// Fetches the latest guild battle report (attack "2a" or defense "2d") and
+// prints its raw `messagetext.s` body as JSON on stdout, so the Python side
 // (sf_absence.parse_absent) can extract who did not participate.
 //
-// WHY A SEPARATE PROBE FROM sf_probe.rs:
-// sf_probe.rs reads guild *status* (attacking/defending), which sf-api parses
-// into GameState. The guild *battle report* (the absentee list) is NOT parsed
-// into GameState; it only exists in the raw server response under the
-// "messagetext.s:" section. Reading that needs the raw response string, exposed
-// by Session::send_command_raw() -> Response -> .raw_response(). SimpleSession
-// hides that, so we obtain the underlying raw Session ourselves via
-// SFAccount::login().characters() — exactly what SimpleSession::login_sf_account
-// does internally, but we keep the raw Session.
+// TWO-PHASE FETCH (important):
+// The list of report IDs (`systemmessagelist.r`) is NOT part of the Update
+// response — it is only bundled by the server alongside a PlayerMessageView
+// response. So we:
+//   Phase 1: send PlayerMessageView:1 (open the first inbox message) purely to
+//            obtain the bundled systemmessagelist.
+//   Phase 2: from that list pick the newest battle report (2a or 2d), open it
+//            by its base64 msg_id, and return the messagetext body.
 //
 // INPUT (stdin):  <server>\n<username>\n<password>\n
 // OUTPUT (one JSON line):
-//   {"ok":true,"msg_id":11240528,"body":"messagetext.s:2a/..."}
+//   {"ok":true,"msg_id":123,"kind":"attack","body":"messagetext.s:2a/..."}
+//   {"ok":true,"msg_id":123,"kind":"defense","body":"messagetext.s:2d/..."}
 //   {"ok":false,"error":"..."}
 // ============================================================================
 
@@ -57,56 +57,65 @@ fn server_host(session: &Session) -> String {
         .unwrap_or_default()
 }
 
-/// Newest guild ATTACK (type "2a") report's msg_id from "systemmessagelist.r:".
-/// Entry: msg_id,0,1,14,created_ts,expires_ts,TYPE  (2a=attack, 2d=defense, 17=other)
-fn newest_attack_msg_id(raw: &str) -> Option<i64> {
+/// Send Command::Custom "PlayerMessageView" with a single argument.
+async fn player_message_view(session: &Session, arg: &str) -> Result<String, String> {
+    let cmd = Command::Custom {
+        cmd_name: "PlayerMessageView".to_string(),
+        arguments: vec![arg.to_string()],
+    };
+    let resp = session
+        .send_command_raw(cmd)
+        .await
+        .map_err(|e| format!("PlayerMessageView:{arg} failed: {e:?}"))?;
+    Ok(resp.raw_response().to_string())
+}
+
+/// From a raw response containing "systemmessagelist.r:", pick the newest
+/// battle report. Returns (msg_id, kind) where kind is "attack" or "defense".
+/// Entry format: msg_id,0,1,14,created_ts,expires_ts,TYPE  (2a=attack, 2d=defense)
+fn newest_battle_report(raw: &str) -> Option<(i64, &'static str)> {
     let section = raw.split("systemmessagelist.r:").nth(1)?.split('&').next()?;
-    let mut best: Option<(i64, i64)> = None; // (created_ts, msg_id)
+    let mut best: Option<(i64, i64, &'static str)> = None; // (created_ts, msg_id, kind)
     for entry in section.split(';') {
         let entry = entry.trim();
         if entry.is_empty() {
             continue;
         }
         let f: Vec<&str> = entry.split(',').collect();
-        if f.len() < 7 || f[6] != "2a" {
+        if f.len() < 7 {
             continue;
         }
+        let kind = match f[6] {
+            "2a" => "attack",
+            "2d" => "defense",
+            _ => continue, // ignore type 17 and anything else
+        };
         if let (Ok(msg_id), Ok(created)) = (f[0].parse::<i64>(), f[4].parse::<i64>()) {
-            if best.map_or(true, |(bc, _)| created > bc) {
-                best = Some((created, msg_id));
+            if best.map_or(true, |(bc, _, _)| created > bc) {
+                best = Some((created, msg_id, kind));
             }
         }
     }
-    best.map(|(_, id)| id)
+    best.map(|(_, id, kind)| (id, kind))
 }
 
-/// Fetch systemmessagelist + open the newest attack report on one (logged-in) Session.
-async fn fetch_report(session: &Session) -> Result<(i64, String), String> {
-    let resp = session
-        .send_command_raw(Command::Update)
-        .await
-        .map_err(|e| format!("update failed: {e:?}"))?;
-    let raw = resp.raw_response().to_string();
+async fn fetch_report(session: &Session) -> Result<(i64, &'static str, String), String> {
+    // Phase 1: open the first inbox message to obtain the bundled
+    // systemmessagelist. If the inbox is empty, PlayerMessageView:1 may still
+    // return the list section (which is what we actually need).
+    let raw1 = player_message_view(session, "1").await?;
 
-    let msg_id = newest_attack_msg_id(&raw).ok_or("no attack (2a) report found")?;
+    let (msg_id, kind) =
+        newest_battle_report(&raw1).ok_or("no attack/defense report found in message list")?;
 
-    // PlayerMessageView:<base64(msg_id)> — Command::Custom serializes to
-    // "{cmd_name}:{args joined by /}", reproducing the exact browser request.
+    // Phase 2: open the chosen report by its base64-encoded msg_id.
     let b64_id = B64.encode(msg_id.to_string());
-    let open = Command::Custom {
-        cmd_name: "PlayerMessageView".to_string(),
-        arguments: vec![b64_id],
-    };
-    let resp2 = session
-        .send_command_raw(open)
-        .await
-        .map_err(|e| format!("message open failed: {e:?}"))?;
-    let raw2 = resp2.raw_response().to_string();
+    let raw2 = player_message_view(session, &b64_id).await?;
 
     if !raw2.contains("messagetext.s:") {
-        return Err("opened message had no messagetext body".to_string());
+        return Err("opened report had no messagetext body".to_string());
     }
-    Ok((msg_id, raw2))
+    Ok((msg_id, kind, raw2))
 }
 
 #[tokio::main]
@@ -127,9 +136,6 @@ async fn main() {
         }
     }
 
-    // SSO login, then keep the raw per-character Sessions (mirrors
-    // SimpleSession::login_sf_account internally, but retains raw Session
-    // access for send_command_raw / raw_response).
     let account = match SFAccount::login(username.clone(), password.clone()).await {
         Ok(a) => a,
         Err(e) => {
@@ -159,8 +165,13 @@ async fn main() {
             continue;
         }
         match fetch_report(&session).await {
-            Ok((msg_id, body)) => {
-                println!(r#"{{"ok":true,"msg_id":{},"body":{}}}"#, msg_id, json_string(&body));
+            Ok((msg_id, kind, body)) => {
+                println!(
+                    r#"{{"ok":true,"msg_id":{},"kind":{},"body":{}}}"#,
+                    msg_id,
+                    json_string(kind),
+                    json_string(&body)
+                );
                 return;
             }
             Err(e) => {

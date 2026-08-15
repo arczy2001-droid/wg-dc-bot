@@ -52,7 +52,7 @@ from world_registry import WorldTransformer, registered_world_autocomplete
 DB_PATH = "gildia.db"
 SF_REPORT_PROBE_PATH = os.getenv("SF_REPORT_PROBE_PATH", "./target/release/sf_report_probe")
 PROBE_TIMEOUT_SECONDS = 40  # a report fetch is 2 round-trips, allow a little more than status probe
-ATTACK_TYPE_CODE = "2a"
+BATTLE_TYPE_CODES = ("2a", "2d")  # 2a = attack, 2d = defense
 
 
 def _connect() -> sqlite3.Connection:
@@ -191,8 +191,13 @@ async def run_report_probe(server: str, username: str, password: str) -> dict[st
 # Embed
 # ---------------------------------------------------------------------------
 
-def _build_embed(swiat: str, opponent: str, absent: list[str]) -> discord.Embed:
+def _build_embed(swiat: str, opponent: str, absent: list[str], kind: str = "attack") -> discord.Embed:
     when = datetime.now().strftime("%Y-%m-%d %H:%M")
+    # Polish labels; attack vs defense.
+    if kind == "defense":
+        icon, label = "🛡️", "obronie"
+    else:
+        icon, label = "⚔️", "ataku"
     if absent:
         desc = "\n".join(f"• {name}" for name in absent)
         colour = discord.Color.red()
@@ -200,7 +205,7 @@ def _build_embed(swiat: str, opponent: str, absent: list[str]) -> discord.Embed:
         desc = "✅ Wszyscy zarejestrowani członkowie wzięli udział."
         colour = discord.Color.green()
     embed = discord.Embed(
-        title=f"⚔️ Nieobecni w ataku gildii — {swiat.upper()}",
+        title=f"{icon} Nieobecni w {label} gildii — {swiat.upper()}",
         description=desc, colour=colour,
     )
     embed.add_field(name="Przeciwnik", value=opponent or "—", inline=True)
@@ -265,15 +270,18 @@ class AbsenceMonitor:
 
         body = result.get("body", "")
         section = extract_section(body, "messagetext.s")
-        if not section or section.split("/", 1)[0] != ATTACK_TYPE_CODE:
-            return {"status": "not_attack", "detail": "latest report was not an attack report"}
+        type_code = section.split("/", 1)[0] if section else ""
+        if not section or type_code not in BATTLE_TYPE_CODES:
+            return {"status": "not_attack", "detail": "latest report was not a battle report"}
 
+        # kind comes from the probe ("attack"/"defense"); fall back to type code.
+        kind = result.get("kind") or ("defense" if type_code == "2d" else "attack")
         opponent, absent = parse_absent(section)
         rhash = _report_hash(opponent, absent)
 
         if _already_posted(w["guild_id"], w["swiat"], rhash):
             return {"status": "duplicate", "opponent": opponent, "absent": absent,
-                    "detail": "this battle was already posted"}
+                    "kind": kind, "detail": "this battle was already posted"}
 
         channel = self.bot.get_channel(int(w["kanal_id"]))
         if channel is None:
@@ -285,14 +293,14 @@ class AbsenceMonitor:
 
         _write_absences(w["guild_id"], w["swiat"], absent)
         try:
-            await channel.send(embed=_build_embed(w["swiat"], opponent, absent))
+            await channel.send(embed=_build_embed(w["swiat"], opponent, absent, kind))
         except discord.DiscordException as exc:
             return {"status": "error", "opponent": opponent, "absent": absent,
-                    "detail": f"failed to post: {exc}"}
+                    "kind": kind, "detail": f"failed to post: {exc}"}
         _mark_posted(w["guild_id"], w["swiat"], rhash, opponent, int(result.get("msg_id", 0)))
-        print(f"sf_absence: posted {w['swiat']} vs {opponent} ({len(absent)} absent)")
+        print(f"sf_absence: posted {w['swiat']} {kind} vs {opponent} ({len(absent)} absent)")
         return {"status": "posted", "opponent": opponent, "absent": absent,
-                "detail": f"posted to <#{w['kanal_id']}>"}
+                "kind": kind, "detail": f"posted to <#{w['kanal_id']}>"}
 
 
 # ---------------------------------------------------------------------------
