@@ -174,5 +174,11 @@
     "options": {
       "world_name": "Welt, für die diese Alarmkonfiguration gilt (z.B. eu20)"
     }
+  },
+  "gt_absence_check": {
+    "description": "Neuesten Gildenangriffs-Bericht manuell abrufen und Abwesende posten (zum Testen).",
+    "options": {
+      "swiat": "Welche Welt geprüft werden soll (braucht Sentry-Konto + Kanal)"
+    }
   }
 }

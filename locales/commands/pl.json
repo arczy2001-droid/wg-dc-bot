@@ -174,5 +174,11 @@
     "options": {
       "world_name": "Świat, którego dotyczy ta konfiguracja alertów (np. eu20)"
     }
+  },
+  "gt_absence_check": {
+    "description": "Ręcznie pobierz najnowszy raport ataku gildii i opublikuj nieobecności (test).",
+    "options": {
+      "swiat": "Który świat sprawdzić (wymaga konta sentry + kanału)"
+    }
   }
 }

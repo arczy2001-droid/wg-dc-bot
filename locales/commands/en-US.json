@@ -174,5 +174,11 @@
     "options": {
       "world_name": "World this alert config applies to (e.g. eu20)"
     }
+  },
+  "gt_absence_check": {
+    "description": "Manually fetch the latest guild attack report and post absences (for testing).",
+    "options": {
+      "swiat": "Which world to check (needs a sentry account + channel)"
+    }
   }
 }
