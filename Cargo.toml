@@ -39,3 +39,7 @@ path = "sf_report_diag.rs"
 [[bin]]
 name = "sf_members_diag"
 path = "sf_members_diag.rs"
+
+[[bin]]
+name = "sf_mail_diag"
+path = "sf_mail_diag.rs"
