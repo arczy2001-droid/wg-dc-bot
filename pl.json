@@ -1,0 +1,184 @@
+{
+  "gt_world_add": {
+    "description": "Dodaj świat i przypisz kanał",
+    "options": {
+      "nazwa": "Nazwa świata",
+      "kanal": "Kanał, na który będą wysyłane raporty tego świata"
+    }
+  },
+  "gt_world_delete": {
+    "description": "Usuń świat",
+    "options": {
+      "nazwa": "Nazwa świata do usunięcia"
+    }
+  },
+  "gt_worlds": {
+    "description": "Wyświetl listę wszystkich skonfigurowanych światów"
+  },
+  "gt_member_add": {
+    "description": "Przypisz graczy do listy członków świata",
+    "options": {
+      "swiat": "Nazwa świata",
+      "lista": "Nicki graczy, oddzielone przecinkami lub nowymi liniami"
+    }
+  },
+  "gt_member_delete": {
+    "description": "Usuń gracza ze świata",
+    "options": {
+      "swiat": "Nazwa świata",
+      "nick": "Nick gracza do usunięcia"
+    }
+  },
+  "gt_members": {
+    "description": "Pokaż listę członków świata",
+    "options": {
+      "swiat": "Nazwa świata"
+    }
+  },
+  "report": {
+    "description": "Prześlij zrzut ekranu z bitwy; OCR odczytuje nieobecności",
+    "options": {
+      "swiat": "Nazwa świata",
+      "screen": "Zrzut ekranu z listą bitwy/aktywności",
+      "data": "Data raportu: DD.MM lub DD.MM.RRRR (domyślnie dzisiaj, jeśli pominięto)"
+    }
+  },
+  "gt_absent_list": {
+    "description": "Pokaż ranking nieobecności (7d / 14d / 31d / cały czas)",
+    "options": {
+      "swiat": "Nazwa świata",
+      "okres": "Zakres czasu do uwzględnienia (domyślnie: cały czas, ignorowane, jeśli ustawiono 'od' lub 'do')",
+      "od": "Początek własnego zakresu: DD.MM lub DD.MM.RRRR (np. 10.07)",
+      "do": "Koniec własnego zakresu: DD.MM lub DD.MM.RRRR (np. 17.07)"
+    }
+  },
+  "gt_report_delete": {
+    "description": "Cofnij ostatnio przesłany raport",
+    "options": {
+      "swiat": "Nazwa świata"
+    }
+  },
+  "gt_absent_add": {
+    "description": "Ręcznie dodaj jedną nieobecność",
+    "options": {
+      "swiat": "Nazwa świata",
+      "nick": "Nick gracza",
+      "data": "Data raportu: DD.MM lub DD.MM.RRRR (domyślnie dzisiaj)"
+    }
+  },
+  "gt_absent_delete": {
+    "description": "Usuń jeden wpis nieobecności",
+    "options": {
+      "swiat": "Nazwa świata",
+      "nick": "Nick gracza"
+    }
+  },
+  "gt_wipe": {
+    "description": "Wyczyść wszystkie dane o nieobecnościach dla tego serwera"
+  },
+  "gt_reports_wipe": {
+    "description": "Usuń raporty według konkretnej daty lub wieku",
+    "options": {
+      "swiat": "Nazwa świata",
+      "data": "Konkretna data bitwy do usunięcia (DD.MM[.RRRR]). Bez podania usuwa raporty starsze niż 3 dni."
+    }
+  },
+  "gt_ranking_set": {
+    "description": "Włącz/wyłącz cotygodniowy automatyczny ranking",
+    "options": {
+      "swiat": "Świat, którego dotyczy ten harmonogram",
+      "enabled": "Włącz lub wyłącz automatyczny cotygodniowy ranking dla tego świata",
+      "weekday": "Dzień tygodnia, w którym ma być publikowany (tylko gdy włączony)",
+      "hour": "Godzina, format 24h (tylko gdy włączony)",
+      "minute": "Minuta (tylko gdy włączony)"
+    }
+  },
+  "gt_ranking_status": {
+    "description": "Pokaż aktualny harmonogram rankingu",
+    "options": {
+      "swiat": "Pokaż harmonogram tylko dla tego świata (pomiń, aby zobaczyć wszystkie)"
+    }
+  },
+  "gt_block_image": {
+    "description": "Ręcznie zablokuj znany obraz scamowy",
+    "options": {
+      "image": "Obraz do zablokowania",
+      "reason": "Powód blokowania (opcjonalnie)"
+    }
+  },
+  "gt_blocklist_stats": {
+    "description": "Pokaż statystyki listy blokowanych obrazów scamowych"
+  },
+  "gt_setup": {
+    "description": "Jednorazowy interaktywny kreator konfiguracji"
+  },
+  "gt_setup_reset": {
+    "description": "Odblokuj konfigurację, aby ponownie uruchomić /gt_setup"
+  },
+  "gt_setup_settings": {
+    "description": "Edytuj pojedyncze ustawienie bez pełnego resetu"
+  },
+  "gt_events_setup": {
+    "description": "Ustaw kanał webhooków dla wpisów o wydarzeniach",
+    "options": {
+      "channel": "Kanał, który odbiera oficjalne wiadomości/webhooki z wydarzeniami"
+    }
+  },
+  "gt_events_toggle": {
+    "description": "Włącz/wyłącz śledzenie wydarzeń",
+    "options": {
+      "state": "True aby włączyć, False aby wyłączyć"
+    }
+  },
+  "gt_events_reload": {
+    "description": "Przeskanuj historię kanału ponownie, odśwież harmonogram"
+  },
+  "events": {
+    "description": "Pokaż wydarzenia na ten weekend"
+  },
+  "gt_recruitment_panel": {
+    "description": "Opublikuj panel „Dołącz do gildii”",
+    "options": {
+      "channel": "Kanał, na którym ma pojawić się panel rekrutacji",
+      "officer_role": "Rola, która może rozpatrywać i decydować o podaniach",
+      "member_role": "Opcjonalnie: rola nadawana automatycznie przyjętym kandydatom",
+      "member_role_2": "Opcjonalnie: dodatkowa ranga nadawana przyjętym kandydatom",
+      "member_role_3": "Opcjonalnie: dodatkowa ranga nadawana przyjętym kandydatom",
+      "member_role_4": "Opcjonalnie: dodatkowa ranga nadawana przyjętym kandydatom"
+    }
+  },
+  "gt_sf_login": {
+    "description": "Bezpiecznie połącz konto Shakes & Fidget do monitorowania gildii.",
+    "options": {
+      "user": "Tylko admin: zarejestruj w imieniu innego członka (domyślnie: ty)"
+    }
+  },
+  "gt_sf_logout": {
+    "description": "Usuń zapisane dane logowania Shakes & Fidget z bota.",
+    "options": {
+      "world": "Usuń tylko ten świat (pomiń, aby usunąć wszystkie twoje)"
+    }
+  },
+  "gt_sf_toggle_checks": {
+    "description": "Włącz lub wyłącz cogodzinne sprawdzanie ataku/obrony gildii dla twojego konta.",
+    "options": {
+      "state": "True, aby włączyć cogodzinne sprawdzanie, False, aby wyłączyć",
+      "world": "Zastosuj tylko do tego świata (pomiń dla wszystkich twoich kont)"
+    }
+  },
+  "gt_sf_status": {
+    "description": "Pokaż swoje połączone konta Shakes & Fidget i status sprawdzania."
+  },
+  "gt_alerts_panel": {
+    "description": "Opublikuj panel alertów dla świata (kanał, rola pingowana, wyciszenie obrony).",
+    "options": {
+      "world_name": "Świat, którego dotyczy ta konfiguracja alertów (np. eu20)"
+    }
+  },
+  "gt_absence_check": {
+    "description": "Ręcznie pobierz najnowszy raport ataku gildii i opublikuj nieobecności (test).",
+    "options": {
+      "swiat": "Który świat sprawdzić (wymaga konta sentry + kanału)"
+    }
+  }
+}

@@ -1,49 +1,58 @@
 """
 sf_absence_monitor.py
 =====================
-Hourly background task that replaces the old /wg screenshot-OCR flow.
+Automatic guild-attack absence tracking — the replacement for the old /wg
+screenshot-OCR flow.
 
-For each registered world in `swiaty`, it uses the stored monitor/sentry
-credentials to capture the latest guild-attack report from network traffic
-(sf_capture), parses the absentee list (sf_absence, validated), dedupes by
-report identity so the same battle is never posted twice, and posts a clean
-embed to that world's configured channel (`swiaty.kanal_id`).
+HOW IT WORKS (fully automatic, no browser):
+    Once an hour, for each registered world that has a sentry account, this:
+      1. Runs the Rust `sf_report_probe` binary (same subprocess+stdin pattern
+         as sf_auth.py's status probe) which logs in via SSO, fetches the
+         newest guild ATTACK report over the raw protocol, and prints its
+         `messagetext.s` body as JSON.
+      2. Parses that body with sf_absence.parse_absent (validated against two
+         real battles) to get the opponent + list of absent members.
+      3. Dedupes by report content so the same battle is never posted twice.
+      4. Writes absences into `nieobecnosci` (+ a `raporty` marker) in the
+         SAME format the old /wg flow used, so rankings / /gt_absent_list etc.
+         keep working unchanged.
+      5. Posts a clean embed to that world's channel (`swiaty.kanal_id`) —
+         where the old /wg reports used to land.
 
-INTEGRATION (in main.py setup_hook, before tree.sync):
+INTEGRATION (main.py setup_hook, after init_db and the other init_* calls):
+
     from sf_absence_monitor import AbsenceMonitor, init_absence_tables
     init_absence_tables()
     self.absence_monitor = AbsenceMonitor(self)
     self.absence_monitor.start()
 
-CREDENTIALS:
-    Per-world sentry credentials are read from the existing sf_accounts table
-    (guild_id, world_name, sf_username, password_enc) via sf_auth's helpers,
-    so we reuse the SAME encrypted store the attack-monitor already uses — no
-    new place that holds passwords. Only worlds that have BOTH a sentry
-    account AND a kanal_id are checked.
-
-SAFETY / ROBUSTNESS:
-    - One world's failure (login, capture, parse) never aborts the others.
-    - Dedup by (guild_id, world, opponent, absent-set hash) so re-captures of
-      the same battle don't repost. msg_id would be ideal but the attack
-      report isn't in the personal messagelist, so we key on report content.
-    - All DB access parameterized; busy timeout for safety.
+The Rust binary path defaults to ./target/release/sf_report_probe (override
+with SF_REPORT_PROBE_PATH in .env). Build it with:
+    cargo build --release --bin sf_report_probe
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json
+import os
 import sqlite3
-import traceback
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any
 
 import discord
+from discord import app_commands
 from discord.ext import tasks
 
-from sf_capture import capture_report
+from sf_absence import extract_section, parse_absent
+from sf_auth import decrypt_password  # reuse the existing Fernet decryption
+from world_registry import WorldTransformer, registered_world_autocomplete
 
 DB_PATH = "gildia.db"
+SF_REPORT_PROBE_PATH = os.getenv("SF_REPORT_PROBE_PATH", "./target/release/sf_report_probe")
+PROBE_TIMEOUT_SECONDS = 40  # a report fetch is 2 round-trips, allow a little more than status probe
+ATTACK_TYPE_CODE = "2a"
 
 
 def _connect() -> sqlite3.Connection:
@@ -51,60 +60,34 @@ def _connect() -> sqlite3.Connection:
 
 
 def init_absence_tables() -> None:
-    """Idempotent. Tracks which battles we've already posted."""
+    """Idempotent. Tracks which battle reports we've already posted so a
+    re-fetched report isn't posted twice."""
     conn = _connect()
     conn.execute("""
         CREATE TABLE IF NOT EXISTS absence_reports_seen (
             guild_id     TEXT NOT NULL,
-            world        TEXT NOT NULL,
-            report_hash  TEXT NOT NULL,   -- opponent + sorted absent names
+            swiat        TEXT NOT NULL,
+            report_hash  TEXT NOT NULL,
             opponent     TEXT,
+            msg_id       INTEGER,
             posted_at    TIMESTAMP NOT NULL,
-            PRIMARY KEY (guild_id, world, report_hash)
+            PRIMARY KEY (guild_id, swiat, report_hash)
         )
     """)
     conn.commit()
     conn.close()
 
 
-def _report_hash(opponent: str, absent: list[str]) -> str:
-    """Stable identity for a battle report: opponent + the exact absent set.
-    Two captures of the same battle produce the same hash → no double-post."""
-    key = opponent + "|" + "|".join(sorted(absent))
-    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
+# ---------------------------------------------------------------------------
+# DB helpers
+# ---------------------------------------------------------------------------
 
-
-def _already_posted(guild_id: str, world: str, report_hash: str) -> bool:
+def _get_monitored_worlds() -> list[dict[str, Any]]:
+    """Worlds that have BOTH a channel (swiaty.kanal_id) AND a sentry account
+    (sf_accounts) for the same guild+world. Returns one row per such world."""
     conn = _connect()
-    row = conn.execute(
-        "SELECT 1 FROM absence_reports_seen WHERE guild_id=? AND world=? AND report_hash=?",
-        (guild_id, world, report_hash),
-    ).fetchone()
-    conn.close()
-    return row is not None
-
-
-def _mark_posted(guild_id: str, world: str, report_hash: str, opponent: str) -> None:
-    conn = _connect()
-    conn.execute(
-        """INSERT OR IGNORE INTO absence_reports_seen
-           (guild_id, world, report_hash, opponent, posted_at) VALUES (?, ?, ?, ?, ?)""",
-        (guild_id, world, report_hash, opponent, datetime.now(timezone.utc).isoformat()),
-    )
-    conn.commit()
-    conn.close()
-
-
-def _get_monitored_worlds() -> list[dict]:
-    """Worlds that have BOTH a configured channel (swiaty.kanal_id) AND a
-    sentry account (sf_accounts). Returns per-world dicts with everything
-    needed to log in and post."""
-    conn = _connect()
-    # sf_accounts schema (from sf_auth.py): guild_id, discord_user_id,
-    # world_name, sf_username, password_enc, auto_checks, ...
     rows = conn.execute("""
-        SELECT s.guild_id, s.nazwa, s.kanal_id,
-               a.sf_username, a.password_enc
+        SELECT s.guild_id, s.nazwa, s.kanal_id, a.sf_username, a.password_enc
         FROM swiaty s
         JOIN sf_accounts a
           ON a.guild_id = s.guild_id AND a.world_name = s.nazwa
@@ -112,42 +95,126 @@ def _get_monitored_worlds() -> list[dict]:
     """).fetchall()
     conn.close()
     return [
-        {"guild_id": r[0], "world": r[1], "kanal_id": r[2],
+        {"guild_id": r[0], "swiat": r[1], "kanal_id": r[2],
          "sf_username": r[3], "password_enc": r[4]}
         for r in rows
     ]
 
 
-def _decrypt_password(password_enc) -> Optional[str]:
-    """Reuse sf_auth's Fernet decryption so we never re-implement crypto."""
+def _report_hash(opponent: str, absent: list[str]) -> str:
+    key = opponent + "|" + "|".join(sorted(absent))
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
+
+
+def _already_posted(guild_id: str, swiat: str, report_hash: str) -> bool:
+    conn = _connect()
+    row = conn.execute(
+        "SELECT 1 FROM absence_reports_seen WHERE guild_id=? AND swiat=? AND report_hash=?",
+        (guild_id, swiat, report_hash),
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def _mark_posted(guild_id: str, swiat: str, report_hash: str, opponent: str, msg_id: int) -> None:
+    conn = _connect()
+    conn.execute(
+        """INSERT OR IGNORE INTO absence_reports_seen
+           (guild_id, swiat, report_hash, opponent, msg_id, posted_at)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (guild_id, swiat, report_hash, opponent, msg_id,
+         datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _write_absences(guild_id: str, swiat: str, absent: list[str]) -> None:
+    """Insert rows in the SAME format the old /wg flow used, so existing
+    ranking/query code keeps working unchanged."""
+    now = datetime.now()
+    data_raportu = now.strftime("%d.%m.%Y")
+    conn = _connect()
+    conn.execute(
+        "INSERT INTO raporty (guild_id, swiat, data_raportu, data_wpisu) VALUES (?, ?, ?, ?)",
+        (guild_id, swiat, data_raportu, now),
+    )
+    for nick in absent:
+        conn.execute(
+            "INSERT INTO nieobecnosci (guild_id, swiat, nick, data_raportu, data_wpisu) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (guild_id, swiat, nick, data_raportu, now),
+        )
+    conn.commit()
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Probe runner (mirrors sf_auth.run_probe exactly)
+# ---------------------------------------------------------------------------
+
+async def run_report_probe(server: str, username: str, password: str) -> dict[str, Any]:
+    """Run sf_report_probe, return parsed JSON. Password goes via stdin, never
+    argv. Always returns a dict with at least {"ok": bool}."""
+    if not os.path.exists(SF_REPORT_PROBE_PATH):
+        return {"ok": False, "error": (
+            f"probe binary not found at {SF_REPORT_PROBE_PATH} — build it with "
+            f"`cargo build --release --bin sf_report_probe`"
+        )}
     try:
-        from sf_auth import _decrypt  # existing helper in the project
-        return _decrypt(password_enc)
+        proc = await asyncio.create_subprocess_exec(
+            SF_REPORT_PROBE_PATH,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        payload = f"{server}\n{username}\n{password}\n".encode("utf-8")
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(payload), timeout=PROBE_TIMEOUT_SECONDS
+        )
+    except asyncio.TimeoutError:
+        return {"ok": False, "error": f"probe timed out after {PROBE_TIMEOUT_SECONDS}s"}
     except Exception as exc:  # noqa: BLE001
-        print(f"sf_absence: could not decrypt sentry password: {exc}")
-        return None
+        return {"ok": False, "error": f"probe failed to run: {exc}"}
+
+    raw = stdout.decode("utf-8", errors="replace").strip()
+    if not raw:
+        err = stderr.decode("utf-8", errors="replace").strip()
+        return {"ok": False, "error": f"probe produced no output. stderr: {err[:300]}"}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"ok": False, "error": f"probe output was not valid JSON: {raw[:300]}"}
 
 
-def _build_embed(world: str, opponent: str, absent: list[str]) -> discord.Embed:
+# ---------------------------------------------------------------------------
+# Embed
+# ---------------------------------------------------------------------------
+
+def _build_embed(swiat: str, opponent: str, absent: list[str]) -> discord.Embed:
     when = datetime.now().strftime("%Y-%m-%d %H:%M")
     if absent:
         desc = "\n".join(f"• {name}" for name in absent)
         colour = discord.Color.red()
-        title = f"⚔️ Nieobecni w ataku gildii — {world.upper()}"
     else:
         desc = "✅ Wszyscy zarejestrowani członkowie wzięli udział."
         colour = discord.Color.green()
-        title = f"⚔️ Atak gildii — {world.upper()}"
-
-    embed = discord.Embed(title=title, description=desc, colour=colour)
+    embed = discord.Embed(
+        title=f"⚔️ Nieobecni w ataku gildii — {swiat.upper()}",
+        description=desc, colour=colour,
+    )
     embed.add_field(name="Przeciwnik", value=opponent or "—", inline=True)
     embed.add_field(name="Nieobecnych", value=str(len(absent)), inline=True)
     embed.set_footer(text=f"Automatyczny raport • {when}")
     return embed
 
 
+# ---------------------------------------------------------------------------
+# The hourly monitor
+# ---------------------------------------------------------------------------
+
 class AbsenceMonitor:
-    """Hourly loop. Mirrors the structure of sf_auth.SFMonitor."""
+    """Hourly loop. Structured exactly like sf_auth.SFMonitor."""
 
     def __init__(self, bot: discord.Client) -> None:
         self.bot = bot
@@ -168,52 +235,166 @@ class AbsenceMonitor:
         if not worlds:
             return
         print(f"sf_absence: hourly check for {len(worlds)} world(s)")
-
-        # Sequential on purpose: each capture launches a headless Chromium
-        # (~200-400 MB). Running them one at a time keeps peak RAM to a single
-        # browser, which matters on the 1 GB box. Reuse of a browser across
-        # worlds is possible later, but sequential-and-simple is safer first.
+        # Sequential: each probe is a full login. One at a time keeps load low
+        # on a small VPS and avoids hammering the S&F servers.
         for w in worlds:
             try:
                 await self._check_world(w)
             except Exception as exc:  # noqa: BLE001
-                print(f"sf_absence: error on world {w['world']}: {exc}")
-                if __debug__:
-                    traceback.print_exc()
+                print(f"sf_absence: error on world {w['swiat']}: {exc}")
 
-    async def _check_world(self, w: dict) -> None:
-        password = _decrypt_password(w["password_enc"])
-        if not password:
-            return
+    async def _check_world(self, w: dict[str, Any]) -> None:
+        await self.check_world_once(w)
 
-        # Derive the connectable server domain from the world label if needed.
-        # world_registry.resolve_server_domain would do this; sf_accounts
-        # already stores canonical names in this project, so use as-is.
-        server = w["world"]
+    async def check_world_once(self, w: dict[str, Any]) -> dict[str, Any]:
+        """Run the full pipeline for one world. Returns a result dict so a
+        manual command can report what happened:
+            {"status": "posted"|"duplicate"|"no_report"|"error"|"not_attack",
+             "opponent": str, "absent": [str], "detail": str}
+        """
+        try:
+            password = decrypt_password(w["password_enc"])
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "detail": f"cannot decrypt sentry password: {exc}"}
 
-        result = await capture_report(server, w["sf_username"], password, headless=True)
+        result = await run_report_probe(w["swiat"], w["sf_username"], password)
         del password
 
-        if not result:
-            print(f"sf_absence: no report captured for {w['world']} this cycle")
-            return
+        if not result.get("ok"):
+            return {"status": "no_report", "detail": result.get("error", "no report")}
 
-        opponent = result["opponent"]
-        absent = result["absent"]
+        body = result.get("body", "")
+        section = extract_section(body, "messagetext.s")
+        if not section or section.split("/", 1)[0] != ATTACK_TYPE_CODE:
+            return {"status": "not_attack", "detail": "latest report was not an attack report"}
+
+        opponent, absent = parse_absent(section)
         rhash = _report_hash(opponent, absent)
 
-        if _already_posted(w["guild_id"], w["world"], rhash):
-            return  # same battle already posted — skip silently
+        if _already_posted(w["guild_id"], w["swiat"], rhash):
+            return {"status": "duplicate", "opponent": opponent, "absent": absent,
+                    "detail": "this battle was already posted"}
 
         channel = self.bot.get_channel(int(w["kanal_id"]))
         if channel is None:
-            print(f"sf_absence: channel {w['kanal_id']} not found for {w['world']}")
-            return
+            try:
+                channel = await self.bot.fetch_channel(int(w["kanal_id"]))
+            except Exception:  # noqa: BLE001
+                return {"status": "error", "opponent": opponent, "absent": absent,
+                        "detail": f"channel {w['kanal_id']} not found"}
 
+        _write_absences(w["guild_id"], w["swiat"], absent)
         try:
-            await channel.send(embed=_build_embed(w["world"], opponent, absent))
-            _mark_posted(w["guild_id"], w["world"], rhash, opponent)
-            print(f"sf_absence: posted report for {w['world']} vs {opponent} "
-                  f"({len(absent)} absent)")
+            await channel.send(embed=_build_embed(w["swiat"], opponent, absent))
         except discord.DiscordException as exc:
-            print(f"sf_absence: failed to post to channel for {w['world']}: {exc}")
+            return {"status": "error", "opponent": opponent, "absent": absent,
+                    "detail": f"failed to post: {exc}"}
+        _mark_posted(w["guild_id"], w["swiat"], rhash, opponent, int(result.get("msg_id", 0)))
+        print(f"sf_absence: posted {w['swiat']} vs {opponent} ({len(absent)} absent)")
+        return {"status": "posted", "opponent": opponent, "absent": absent,
+                "detail": f"posted to <#{w['kanal_id']}>"}
+
+
+# ---------------------------------------------------------------------------
+# Manual test command: /gt_absence_check
+# ---------------------------------------------------------------------------
+
+def _get_one_world(guild_id: str, swiat: str) -> dict[str, Any] | None:
+    """Fetch one world's config (channel + sentry account) for the manual
+    check command. Returns None if the world isn't fully set up."""
+    conn = _connect()
+    row = conn.execute("""
+        SELECT s.guild_id, s.nazwa, s.kanal_id, a.sf_username, a.password_enc
+        FROM swiaty s
+        JOIN sf_accounts a
+          ON a.guild_id = s.guild_id AND a.world_name = s.nazwa
+        WHERE s.guild_id = ? AND s.nazwa = ?
+          AND s.kanal_id IS NOT NULL AND s.kanal_id != ''
+    """, (guild_id, swiat.lower())).fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {"guild_id": row[0], "swiat": row[1], "kanal_id": row[2],
+            "sf_username": row[3], "password_enc": row[4]}
+
+
+@app_commands.command(
+    name="gt_absence_check",
+    description="Manually fetch the latest guild attack report now and post absences (for testing).",
+)
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.autocomplete(swiat=registered_world_autocomplete)
+@app_commands.describe(swiat="Which world to check (must have a sentry account + channel set)")
+@app_commands.guild_only()
+async def gt_absence_check(
+    interaction: discord.Interaction,
+    swiat: app_commands.Transform[str, WorldTransformer],
+):
+    # The probe login + fetch can take many seconds — defer so we don't hit
+    # Discord's 3-second interaction timeout.
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    w = _get_one_world(str(interaction.guild_id), swiat)
+    if not w:
+        await interaction.followup.send(
+            f"❌ **{swiat}** isn't fully set up. It needs both a registered channel "
+            f"(via `/gt_world_add`) and a sentry account (via `/gt_sf_login`).",
+            ephemeral=True,
+        )
+        return
+
+    monitor = getattr(interaction.client, "absence_monitor", None)
+    if monitor is None:
+        await interaction.followup.send("❌ Absence monitor isn't running.", ephemeral=True)
+        return
+
+    res = await monitor.check_world_once(w)
+    status = res.get("status")
+    opponent = res.get("opponent", "—")
+    absent = res.get("absent", [])
+    detail = res.get("detail", "")
+
+    if status == "posted":
+        names = ", ".join(absent) if absent else "nobody — everyone participated"
+        await interaction.followup.send(
+            f"✅ Fetched and posted the latest attack report for **{swiat}**.\n"
+            f"**Opponent:** {opponent}\n**Absent ({len(absent)}):** {names}\n{detail}",
+            ephemeral=True,
+        )
+    elif status == "duplicate":
+        names = ", ".join(absent) if absent else "nobody"
+        await interaction.followup.send(
+            f"ℹ️ The latest report for **{swiat}** was already posted, so it wasn't re-posted.\n"
+            f"**Opponent:** {opponent}\n**Absent ({len(absent)}):** {names}\n"
+            f"_(The parser is working — this just means no new battle since last time.)_",
+            ephemeral=True,
+        )
+    elif status == "not_attack":
+        await interaction.followup.send(
+            f"ℹ️ The newest report for **{swiat}** isn't an attack report ({detail}). "
+            f"Nothing to post right now.",
+            ephemeral=True,
+        )
+    elif status == "no_report":
+        await interaction.followup.send(
+            f"⚠️ Couldn't fetch a report for **{swiat}**: {detail}\n"
+            f"_(Check the sentry login works, and that the probe binary is built.)_",
+            ephemeral=True,
+        )
+    else:  # error
+        await interaction.followup.send(
+            f"❌ Something went wrong for **{swiat}**: {detail}", ephemeral=True
+        )
+
+
+@gt_absence_check.error
+async def gt_absence_check_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        msg = "❌ You need **Manage Server** permission for this."
+    else:
+        print(f"gt_absence_check error: {error}")
+        msg = "❌ Something went wrong."
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)

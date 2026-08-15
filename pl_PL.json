@@ -1,0 +1,56 @@
+{
+  "setup": {
+    "step1_title": "🛠️ Konfiguracja serwera — Krok 1/6",
+    "step1_prompt": "Wybierz kanał, na którym dozwolone są komendy bota:",
+    "main_channel_set": "✅ Główny kanał ustawiony na {channel}.",
+    "already_configured": "🔒 Ten serwer jest już skonfigurowany. Kreator konfiguracji jest zablokowany, aby zapobiec przypadkowej zmianie ustawień.",
+    "complete": "✅ Konfiguracja zakończona!"
+  },
+  "errors": {
+    "no_permission": "❌ Musisz mieć uprawnienie **{permission}**, aby użyć tej komendy.",
+    "wrong_channel": "❌ Komendy można wpisywać tylko na głównym kanale: {channel}.",
+    "guild_only": "❌ Tej komendy można używać tylko na serwerze."
+  },
+  "wg": {
+    "unknown_world": "❌ Nieznany świat.",
+    "report_sent": "✅ Raport został wysłany na {channel}.",
+    "inactive_players": "🚨 Nieaktywni podczas ostatniej bitwy ({world}): {players}",
+    "full_attendance": "Nikt — pełna obecność! 🎉",
+    "absent_list_header": "📊 **Najwięcej nieobecności na świecie {world}, na podstawie {report_count} raportów:**",
+    "no_absences": "Brak nieaktywnych graczy."
+  },
+  "worlds": {
+    "added": "✅ Świat {world} został pomyślnie dodany z przypisanym kanałem {channel}.",
+    "deleted": "🗑️ Usunięto świat {world} (wraz z członkami/raportami/nieobecnościami). Czujesz się jak Thanos, niszczyciel światów?",
+    "list_header": "🌍 Światy:",
+    "list_empty": "Nie dodano żadnych światów."
+  },
+  "members": {
+    "added": "✅ Liczba owieczek Bożych wzrosła.",
+    "deleted": "🗑️ {nick} został wyrzucony z gildii.",
+    "list_empty": "👻 Lista członków jest pusta.",
+    "list_title": "📜 Lista członków: {world}",
+    "list_footer": "Łączna liczba członków: {count}"
+  },
+  "reports": {
+    "withdrawn": "⏪ Ostatni raport został wycofany.",
+    "none_found": "❌ Nie znaleziono żadnych raportów dla tego świata.",
+    "absence_added": "➕ Dodano nieobecność dla {nick}.",
+    "absence_deleted": "➖ Usunięto nieobecność gracza {nick}.",
+    "all_cleared": "💥 Baza danych nieobecności i licznik raportów zostały wyczyszczone dla tego serwera."
+  },
+  "security": {
+    "phishing_blocked": "🛡️ **Zablokowano niebezpieczny link!** {mention} próbował wysłać SCAM.",
+    "scam_image_blocked": "🛡️ **Zablokowano podejrzany obrazek!** Załącznik od {mention} odpowiada znanym wzorcom oszustwa."
+  },
+  "recruitment": {
+    "app_title": "📝 Podanie: {nickname}",
+    "field_nickname": "Nick w grze",
+    "field_class": "Klasa postaci",
+    "field_playstyle": "Styl gry",
+    "field_experience": "Doświadczenie / Osiągnięcia",
+    "app_footer": "Podanie #{app_id}",
+    "dm_accepted": "🎉 Gratulacje! Twoje podanie do **{guild}** zostało zaakceptowane. Twój nick został ustawiony na **{nickname}**. Witamy na pokładzie!",
+    "dm_rejected": "Niestety, Twoje podanie do **{guild}** nie zostało tym razem zaakceptowane.\n\n**Powód:** {reason}\n\nMożesz spróbować ponownie w przyszłości."
+  }
+}

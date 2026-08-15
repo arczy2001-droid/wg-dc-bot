@@ -1,0 +1,184 @@
+{
+  "gt_world_add": {
+    "description": "Add a world and assign it a channel",
+    "options": {
+      "nazwa": "World name",
+      "kanal": "Channel where this world's reports will be posted"
+    }
+  },
+  "gt_world_delete": {
+    "description": "Delete a world",
+    "options": {
+      "nazwa": "World name to delete"
+    }
+  },
+  "gt_worlds": {
+    "description": "List all configured worlds"
+  },
+  "gt_member_add": {
+    "description": "Assign players to a world's roster",
+    "options": {
+      "swiat": "World name",
+      "lista": "Player nicknames, separated by commas or new lines"
+    }
+  },
+  "gt_member_delete": {
+    "description": "Remove a player from a world",
+    "options": {
+      "swiat": "World name",
+      "nick": "Player nickname to remove"
+    }
+  },
+  "gt_members": {
+    "description": "Show a world's member list",
+    "options": {
+      "swiat": "World name"
+    }
+  },
+  "report": {
+    "description": "Upload a battle screenshot; OCR reads absences",
+    "options": {
+      "swiat": "World name",
+      "screen": "Screenshot of the battle/activity list",
+      "data": "Report date: DD.MM or DD.MM.YYYY (defaults to today if omitted)"
+    }
+  },
+  "gt_absent_list": {
+    "description": "Show absence ranking (7d / 14d / 31d / all-time)",
+    "options": {
+      "swiat": "World name",
+      "okres": "Time window to include (default: all time, ignored if 'od' or 'do' is set)",
+      "od": "Custom range start: DD.MM or DD.MM.YYYY (e.g. 10.07)",
+      "do": "Custom range end: DD.MM or DD.MM.YYYY (e.g. 17.07)"
+    }
+  },
+  "gt_report_delete": {
+    "description": "Undo the last submitted report",
+    "options": {
+      "swiat": "World name"
+    }
+  },
+  "gt_absent_add": {
+    "description": "Manually add one absence",
+    "options": {
+      "swiat": "World name",
+      "nick": "Player nickname",
+      "data": "Report date: DD.MM or DD.MM.YYYY (defaults to today)"
+    }
+  },
+  "gt_absent_delete": {
+    "description": "Remove one absence entry",
+    "options": {
+      "swiat": "World name",
+      "nick": "Player nickname"
+    }
+  },
+  "gt_wipe": {
+    "description": "Wipe all absence data for this server"
+  },
+  "gt_reports_wipe": {
+    "description": "Delete reports by exact date or by age",
+    "options": {
+      "swiat": "World name",
+      "data": "Exact battle date to delete (DD.MM[.YYYY]). Omit to delete reports older than 3 days."
+    }
+  },
+  "gt_ranking_set": {
+    "description": "Turn the weekly auto-ranking post on/off",
+    "options": {
+      "swiat": "World this schedule applies to",
+      "enabled": "Turn the automatic weekly ranking on or off for this world",
+      "weekday": "Day of the week to post it (only used if enabled)",
+      "hour": "Hour, 24h format (only used if enabled)",
+      "minute": "Minute (only used if enabled)"
+    }
+  },
+  "gt_ranking_status": {
+    "description": "Show the current ranking schedule",
+    "options": {
+      "swiat": "Show only this world's schedule (omit to list every world)"
+    }
+  },
+  "gt_block_image": {
+    "description": "Manually blocklist a known scam image",
+    "options": {
+      "image": "The image to block",
+      "reason": "Why this image is being blocked (optional)"
+    }
+  },
+  "gt_blocklist_stats": {
+    "description": "Show scam-image blocklist stats"
+  },
+  "gt_setup": {
+    "description": "One-time interactive config wizard"
+  },
+  "gt_setup_reset": {
+    "description": "Unlock config to re-run /gt_setup"
+  },
+  "gt_setup_settings": {
+    "description": "Edit a single setting without a full reset"
+  },
+  "gt_events_setup": {
+    "description": "Set the webhook channel for event posts",
+    "options": {
+      "channel": "The channel that receives official game news/event webhooks"
+    }
+  },
+  "gt_events_toggle": {
+    "description": "Enable/disable event tracking",
+    "options": {
+      "state": "True to enable, False to disable"
+    }
+  },
+  "gt_events_reload": {
+    "description": "Re-scan channel history, reload schedule"
+  },
+  "events": {
+    "description": "Show this weekend's events"
+  },
+  "gt_recruitment_panel": {
+    "description": "Post the \"Apply to Guild\" panel",
+    "options": {
+      "channel": "Channel to post the recruitment panel in",
+      "officer_role": "Role that can review and decide on applications",
+      "member_role": "Optional: role automatically given to accepted applicants",
+      "member_role_2": "Optional: additional rank given to accepted applicants",
+      "member_role_3": "Optional: additional rank given to accepted applicants",
+      "member_role_4": "Optional: additional rank given to accepted applicants"
+    }
+  },
+  "gt_sf_login": {
+    "description": "Securely connect a Shakes & Fidget account for guild monitoring.",
+    "options": {
+      "user": "Admin only: register on behalf of another member (defaults to yourself)"
+    }
+  },
+  "gt_sf_logout": {
+    "description": "Delete your stored Shakes & Fidget credentials from the bot.",
+    "options": {
+      "world": "Only remove this world (omit to remove all of yours)"
+    }
+  },
+  "gt_sf_toggle_checks": {
+    "description": "Turn the hourly guild attack/defense check on or off for your account.",
+    "options": {
+      "state": "True to enable hourly checks, False to disable",
+      "world": "Apply to this world only (omit for all of your accounts)"
+    }
+  },
+  "gt_sf_status": {
+    "description": "Show your connected Shakes & Fidget accounts and their check status."
+  },
+  "gt_alerts_panel": {
+    "description": "Post the attack-alert config panel for one world (channel, ping role, defense mute).",
+    "options": {
+      "world_name": "World this alert config applies to (e.g. eu20)"
+    }
+  },
+  "gt_absence_check": {
+    "description": "Manually fetch the latest guild attack report and post absences (for testing).",
+    "options": {
+      "swiat": "Which world to check (needs a sentry account + channel)"
+    }
+  }
+}

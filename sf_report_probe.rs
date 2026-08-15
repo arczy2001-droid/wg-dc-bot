@@ -1,119 +1,173 @@
-// sf_report_probe.rs
-// ===================
-// Fetches the latest guild ATTACK battle report for a S&F account and prints
-// its raw `messagetext.s` body as JSON on stdout. No browser — pure protocol,
-// the same mechanism the attack-alert probe already uses.
+// ============================================================================
+// sf_report_probe.rs — machine-readable guild ATTACK report probe
+// ----------------------------------------------------------------------------
+// Fetches the latest guild attack battle report for an account and prints its
+// raw `messagetext.s` body as JSON on stdout, so the Python side
+// (sf_absence.parse_absent) can extract who did not participate.
 //
-// FLOW (every step confirmed against real captures + crate source):
-//   1. Log in (per-server, else SSO fallback).
-//   2. send_command_raw(Update) -> Response; read .raw_response() which
-//      contains "systemmessagelist.r:" — the list of guild reports.
-//        each entry: msg_id,0,1,14,created_ts,expires_ts,TYPE
-//        TYPE "2a" = attack report, "2d" = defense, "17" = other.
-//   3. Pick the newest "2a" entry (highest created_ts) -> its msg_id.
-//   4. Base64-encode the msg_id, send
-//        Command::Custom { cmd_name: "PlayerMessageView", arguments: [b64] }
-//      which serializes to "PlayerMessageView:<b64>" — exactly the request
-//      the browser sends (verified: params=MTEyNDA1Mjg= == base64("11240528")).
-//   5. Read .raw_response() -> contains "messagetext.s:2a/..." -> print as JSON.
+// WHY A SEPARATE PROBE FROM sf_probe.rs:
+// sf_probe.rs reads guild *status* (attacking/defending), which sf-api parses
+// into GameState. The guild *battle report* (the absentee list) is NOT parsed
+// into GameState; it only exists in the raw server response under the
+// "messagetext.s:" section. Reading that needs the raw response string, exposed
+// by Session::send_command_raw() -> Response -> .raw_response(). SimpleSession
+// hides that, so we obtain the underlying raw Session ourselves via
+// SFAccount::login().characters() — exactly what SimpleSession::login_sf_account
+// does internally, but we keep the raw Session.
 //
-// The Python side (sf_absence.parse_absent) parses the body into the absent
-// list — that parser is already validated against two real battles.
-//
-// USAGE (stdin: server\nlogin\npassword):
-//   printf 's20.sfgame.eu\nLOGIN\nPASS\n' | ./target/release/sf_report_probe
-//
-// OUTPUT (stdout), one JSON line:
+// INPUT (stdin):  <server>\n<username>\n<password>\n
+// OUTPUT (one JSON line):
 //   {"ok":true,"msg_id":11240528,"body":"messagetext.s:2a/..."}
 //   {"ok":false,"error":"..."}
+// ============================================================================
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use sf_api::command::Command;
-use sf_api::session::SimpleSession;
+use sf_api::session::Session;
+use sf_api::sso::SFAccount;
+use std::io::{self, BufRead};
 
-fn out_err(msg: &str) {
-    // Minimal manual JSON so we don't need serde just for errors.
-    let escaped = msg.replace('\\', "\\\\").replace('"', "\\\"");
-    println!("{{\"ok\":false,\"error\":\"{escaped}\"}}");
+fn json_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
-#[tokio::main]
-async fn main() {
-    let mut lines = std::io::stdin().lines();
-    let server = match lines.next() { Some(Ok(s)) => s.trim().to_string(), _ => { out_err("missing server"); return; } };
-    let username = match lines.next() { Some(Ok(s)) => s.trim().to_string(), _ => { out_err("missing username"); return; } };
-    let password = match lines.next() { Some(Ok(s)) => s, _ => { out_err("missing password"); return; } };
+fn err_out(msg: &str) {
+    println!(r#"{{"ok":false,"error":{}}}"#, json_string(msg));
+}
 
-    // Reject control chars (field-injection guard, same as sf_probe).
-    for (label, v) in [("server", &server), ("username", &username), ("password", &password)] {
-        if v.contains('\n') || v.contains('\r') || v.contains('\0') {
-            out_err(&format!("{label} contains a control character"));
-            return;
+fn server_host(session: &Session) -> String {
+    session
+        .server_url()
+        .host_str()
+        .map(|h| h.to_string())
+        .unwrap_or_default()
+}
+
+/// Newest guild ATTACK (type "2a") report's msg_id from "systemmessagelist.r:".
+/// Entry: msg_id,0,1,14,created_ts,expires_ts,TYPE  (2a=attack, 2d=defense, 17=other)
+fn newest_attack_msg_id(raw: &str) -> Option<i64> {
+    let section = raw.split("systemmessagelist.r:").nth(1)?.split('&').next()?;
+    let mut best: Option<(i64, i64)> = None; // (created_ts, msg_id)
+    for entry in section.split(';') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let f: Vec<&str> = entry.split(',').collect();
+        if f.len() < 7 || f[6] != "2a" {
+            continue;
+        }
+        if let (Ok(msg_id), Ok(created)) = (f[0].parse::<i64>(), f[4].parse::<i64>()) {
+            if best.map_or(true, |(bc, _)| created > bc) {
+                best = Some((created, msg_id));
+            }
         }
     }
+    best.map(|(_, id)| id)
+}
 
-    // --- 1. Login (per-server, else SSO) -----------------------------------
-    let mut session = match SimpleSession::login(&username, &password, &server).await {
-        Ok(s) => s,
-        Err(_) => {
-            let sessions = match SimpleSession::login_sf_account(&username, &password).await {
-                Ok(v) => v,
-                Err(e) => { out_err(&format!("login failed: {e:?}")); return; }
-            };
-            let mut found = None;
-            for s in sessions {
-                if s.server_url().host_str().unwrap_or("") == server { found = Some(s); break; }
-            }
-            match found { Some(s) => s, None => { out_err("no SSO character matched the server"); return; } }
-        }
-    };
-
-    // --- 2. Update -> raw response with systemmessagelist ------------------
-    let resp = match session.send_command_raw(Command::Update).await {
-        Ok(r) => r,
-        Err(e) => { out_err(&format!("update failed: {e:?}")); return; }
-    };
+/// Fetch systemmessagelist + open the newest attack report on one (logged-in) Session.
+async fn fetch_report(session: &Session) -> Result<(i64, String), String> {
+    let resp = session
+        .send_command_raw(Command::Update)
+        .await
+        .map_err(|e| format!("update failed: {e:?}"))?;
     let raw = resp.raw_response().to_string();
 
-    // --- 3. Find newest "2a" (attack) msg_id ------------------------------
-    let sml = match raw.split("systemmessagelist.r:").nth(1) {
-        Some(rest) => rest.split('&').next().unwrap_or(""),
-        None => { out_err("no systemmessagelist in response"); return; }
-    };
-    let mut best: Option<(i64, i64)> = None; // (created_ts, msg_id)
-    for entry in sml.split(';') {
-        let entry = entry.trim();
-        if entry.is_empty() { continue; }
-        let f: Vec<&str> = entry.split(',').collect();
-        if f.len() < 7 { continue; }
-        if f[6] != "2a" { continue; } // attack reports only
-        let (msg_id, created) = match (f[0].parse::<i64>(), f[4].parse::<i64>()) {
-            (Ok(m), Ok(c)) => (m, c),
-            _ => continue,
-        };
-        if best.map_or(true, |(bc, _)| created > bc) {
-            best = Some((created, msg_id));
-        }
-    }
-    let msg_id = match best { Some((_, m)) => m, None => { out_err("no attack (2a) report found"); return; } };
+    let msg_id = newest_attack_msg_id(&raw).ok_or("no attack (2a) report found")?;
 
-    // --- 4. Open that report via Custom PlayerMessageView -----------------
+    // PlayerMessageView:<base64(msg_id)> — Command::Custom serializes to
+    // "{cmd_name}:{args joined by /}", reproducing the exact browser request.
     let b64_id = B64.encode(msg_id.to_string());
     let open = Command::Custom {
         cmd_name: "PlayerMessageView".to_string(),
         arguments: vec![b64_id],
     };
-    let resp2 = match session.send_command_raw(open).await {
-        Ok(r) => r,
-        Err(e) => { out_err(&format!("message open failed: {e:?}")); return; }
-    };
+    let resp2 = session
+        .send_command_raw(open)
+        .await
+        .map_err(|e| format!("message open failed: {e:?}"))?;
     let raw2 = resp2.raw_response().to_string();
 
-    // --- 5. Emit the messagetext body as JSON -----------------------------
     if !raw2.contains("messagetext.s:") {
-        out_err("opened message had no messagetext body");
+        return Err("opened message had no messagetext body".to_string());
+    }
+    Ok((msg_id, raw2))
+}
+
+#[tokio::main]
+async fn main() {
+    let mut lines = io::stdin().lock().lines();
+    let server = lines.next().and_then(|l| l.ok()).unwrap_or_default();
+    let username = lines.next().and_then(|l| l.ok()).unwrap_or_default();
+    let password = lines.next().and_then(|l| l.ok()).unwrap_or_default();
+
+    if server.is_empty() || username.is_empty() || password.is_empty() {
+        err_out("missing credentials on stdin");
         return;
     }
-    let body_escaped = raw2.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
-    println!("{{\"ok\":true,\"msg_id\":{msg_id},\"body\":\"{body_escaped}\"}}");
+    for (label, v) in [("server", &server), ("username", &username), ("password", &password)] {
+        if v.contains('\n') || v.contains('\r') || v.contains('\0') {
+            err_out(&format!("{label} contains a control character"));
+            return;
+        }
+    }
+
+    // SSO login, then keep the raw per-character Sessions (mirrors
+    // SimpleSession::login_sf_account internally, but retains raw Session
+    // access for send_command_raw / raw_response).
+    let account = match SFAccount::login(username.clone(), password.clone()).await {
+        Ok(a) => a,
+        Err(e) => {
+            err_out(&format!("sso login failed: {e:?}"));
+            return;
+        }
+    };
+    let chars = match account.characters().await {
+        Ok(c) => c,
+        Err(e) => {
+            err_out(&format!("characters fetch failed: {e:?}"));
+            return;
+        }
+    };
+
+    let mut last_err = String::from("no character matched the server");
+    for maybe_session in chars {
+        let mut session = match maybe_session {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if server_host(&session) != server {
+            continue;
+        }
+        if let Err(e) = session.login().await {
+            last_err = format!("character login failed: {e:?}");
+            continue;
+        }
+        match fetch_report(&session).await {
+            Ok((msg_id, body)) => {
+                println!(r#"{{"ok":true,"msg_id":{},"body":{}}}"#, msg_id, json_string(&body));
+                return;
+            }
+            Err(e) => {
+                last_err = e;
+                continue;
+            }
+        }
+    }
+    err_out(&last_err);
 }

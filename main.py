@@ -44,6 +44,11 @@ from sf_auth import (
     gt_sf_login, gt_sf_logout, gt_sf_toggle_checks, gt_sf_status,
     SFMonitor,
 )
+from sf_absence_monitor import (
+    init_absence_tables,
+    AbsenceMonitor,
+    gt_absence_check,
+)
 from world_registry import (
     migrate_world_identifiers,
     resolve_server_domain,
@@ -351,6 +356,10 @@ class MyBot(commands.Bot):
             self.tree.add_command(cmd)
         self.sf_monitor = SFMonitor(self)
         self.sf_monitor.start()
+        init_absence_tables()
+        self.absence_monitor = AbsenceMonitor(self)
+        self.absence_monitor.start()
+        self.tree.add_command(gt_absence_check)
         await self.tree.sync()
 
     @tasks.loop(hours=1)

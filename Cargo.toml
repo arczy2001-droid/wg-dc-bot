@@ -8,11 +8,18 @@ edition = "2021"
 name = "sf_login_check"
 path = "sf_login_check.rs"
 
-# Machine-readable probe used by the Python Discord bot.
+# Machine-readable guild-status probe used by the Python Discord bot.
 # Reads "server\nusername\npassword" on stdin, prints one JSON line on stdout.
 [[bin]]
 name = "sf_probe"
 path = "sf_probe.rs"
+
+# Machine-readable guild ATTACK REPORT probe. Fetches the newest guild attack
+# battle report and prints its raw messagetext body as JSON, so the Python side
+# can extract the list of absent members. Same stdin/stdout contract as sf_probe.
+[[bin]]
+name = "sf_report_probe"
+path = "sf_report_probe.rs"
 
 [dependencies]
 # The real Shakes & Fidget API crate — https://github.com/the-marenga/sf-api
@@ -24,7 +31,3 @@ tokio = { version = "1", features = ["full"] }
 
 # Masks password input in the terminal (used only by sf_login_check)
 rpassword = "7"
-
-[[bin]]
-name = "dump_report"
-path = "dump_report.rs"

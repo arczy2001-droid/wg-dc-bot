@@ -1,0 +1,184 @@
+{
+  "gt_world_add": {
+    "description": "Eine Welt hinzufügen und einen Kanal zuweisen",
+    "options": {
+      "nazwa": "Weltname",
+      "kanal": "Kanal, in dem die Berichte dieser Welt gepostet werden"
+    }
+  },
+  "gt_world_delete": {
+    "description": "Eine Welt löschen",
+    "options": {
+      "nazwa": "Zu löschende Welt"
+    }
+  },
+  "gt_worlds": {
+    "description": "Alle konfigurierten Welten auflisten"
+  },
+  "gt_member_add": {
+    "description": "Spieler zum Mitgliederstamm einer Welt hinzufügen",
+    "options": {
+      "swiat": "Weltname",
+      "lista": "Spieler-Nicknamen, getrennt durch Kommas oder Zeilenumbrüche"
+    }
+  },
+  "gt_member_delete": {
+    "description": "Einen Spieler aus einer Welt entfernen",
+    "options": {
+      "swiat": "Weltname",
+      "nick": "Zu entfernender Spieler-Nickname"
+    }
+  },
+  "gt_members": {
+    "description": "Mitgliederliste einer Welt anzeigen",
+    "options": {
+      "swiat": "Weltname"
+    }
+  },
+  "report": {
+    "description": "Kampf-Screenshot hochladen; OCR erkennt Abwesenheiten",
+    "options": {
+      "swiat": "Weltname",
+      "screen": "Screenshot der Kampf-/Aktivitätsliste",
+      "data": "Berichtsdatum: TT.MM oder TT.MM.JJJJ (Standard: heute, falls weggelassen)"
+    }
+  },
+  "gt_absent_list": {
+    "description": "Abwesenheits-Ranking anzeigen (7T / 14T / 31T / gesamt)",
+    "options": {
+      "swiat": "Weltname",
+      "okres": "Zu berücksichtigender Zeitraum (Standard: gesamt, wird ignoriert, wenn 'od' oder 'do' gesetzt ist)",
+      "od": "Beginn des benutzerdefinierten Zeitraums: TT.MM oder TT.MM.JJJJ (z.B. 10.07)",
+      "do": "Ende des benutzerdefinierten Zeitraums: TT.MM oder TT.MM.JJJJ (z.B. 17.07)"
+    }
+  },
+  "gt_report_delete": {
+    "description": "Den zuletzt übermittelten Bericht rückgängig machen",
+    "options": {
+      "swiat": "Weltname"
+    }
+  },
+  "gt_absent_add": {
+    "description": "Eine Abwesenheit manuell hinzufügen",
+    "options": {
+      "swiat": "Weltname",
+      "nick": "Spieler-Nickname",
+      "data": "Berichtsdatum: TT.MM oder TT.MM.JJJJ (Standard: heute)"
+    }
+  },
+  "gt_absent_delete": {
+    "description": "Einen Abwesenheitseintrag entfernen",
+    "options": {
+      "swiat": "Weltname",
+      "nick": "Spieler-Nickname"
+    }
+  },
+  "gt_wipe": {
+    "description": "Alle Abwesenheitsdaten dieses Servers löschen"
+  },
+  "gt_reports_wipe": {
+    "description": "Berichte nach genauem Datum oder Alter löschen",
+    "options": {
+      "swiat": "Weltname",
+      "data": "Genaues Kampfdatum (TT.MM[.JJJJ]). Ohne Angabe werden Berichte älter als 3 Tage gelöscht."
+    }
+  },
+  "gt_ranking_set": {
+    "description": "Das wöchentliche Auto-Ranking ein-/ausschalten",
+    "options": {
+      "swiat": "Welt, für die dieser Zeitplan gilt",
+      "enabled": "Automatisches wöchentliches Ranking für diese Welt ein- oder ausschalten",
+      "weekday": "Wochentag für die Veröffentlichung (nur relevant, wenn aktiviert)",
+      "hour": "Stunde, 24-Stunden-Format (nur relevant, wenn aktiviert)",
+      "minute": "Minute (nur relevant, wenn aktiviert)"
+    }
+  },
+  "gt_ranking_status": {
+    "description": "Den aktuellen Ranking-Zeitplan anzeigen",
+    "options": {
+      "swiat": "Nur den Zeitplan dieser Welt anzeigen (weglassen für alle)"
+    }
+  },
+  "gt_block_image": {
+    "description": "Ein bekanntes Scam-Bild manuell blockieren",
+    "options": {
+      "image": "Das zu blockierende Bild",
+      "reason": "Grund für die Blockierung (optional)"
+    }
+  },
+  "gt_blocklist_stats": {
+    "description": "Statistiken zur Scam-Bild-Blockliste anzeigen"
+  },
+  "gt_setup": {
+    "description": "Einmaliger interaktiver Einrichtungsassistent"
+  },
+  "gt_setup_reset": {
+    "description": "Konfiguration entsperren, um /gt_setup erneut auszuführen"
+  },
+  "gt_setup_settings": {
+    "description": "Eine einzelne Einstellung ändern, ohne alles zurückzusetzen"
+  },
+  "gt_events_setup": {
+    "description": "Den Webhook-Kanal für Event-Beiträge festlegen",
+    "options": {
+      "channel": "Der Kanal, der offizielle Spiel-News/Event-Webhooks empfängt"
+    }
+  },
+  "gt_events_toggle": {
+    "description": "Event-Tracking aktivieren/deaktivieren",
+    "options": {
+      "state": "True zum Aktivieren, False zum Deaktivieren"
+    }
+  },
+  "gt_events_reload": {
+    "description": "Kanalverlauf erneut scannen, Zeitplan neu laden"
+  },
+  "events": {
+    "description": "Die Events dieses Wochenendes anzeigen"
+  },
+  "gt_recruitment_panel": {
+    "description": "Das „Gilde beitreten“-Panel posten",
+    "options": {
+      "channel": "Kanal, in dem das Rekrutierungspanel veröffentlicht wird",
+      "officer_role": "Rolle, die Bewerbungen prüfen und entscheiden kann",
+      "member_role": "Optional: Rolle, die angenommenen Bewerbern automatisch vergeben wird",
+      "member_role_2": "Optional: zusätzlicher Rang, der angenommenen Bewerbern vergeben wird",
+      "member_role_3": "Optional: zusätzlicher Rang, der angenommenen Bewerbern vergeben wird",
+      "member_role_4": "Optional: zusätzlicher Rang, der angenommenen Bewerbern vergeben wird"
+    }
+  },
+  "gt_sf_login": {
+    "description": "Ein Shakes & Fidget-Konto sicher für die Gilden-Überwachung verbinden.",
+    "options": {
+      "user": "Nur Admin: im Namen eines anderen Mitglieds registrieren (Standard: du selbst)"
+    }
+  },
+  "gt_sf_logout": {
+    "description": "Deine gespeicherten Shakes & Fidget-Zugangsdaten aus dem Bot löschen.",
+    "options": {
+      "world": "Nur diese Welt entfernen (weglassen, um alle deine zu entfernen)"
+    }
+  },
+  "gt_sf_toggle_checks": {
+    "description": "Die stündliche Angriffs-/Verteidigungsprüfung für dein Konto ein- oder ausschalten.",
+    "options": {
+      "state": "True zum Aktivieren der stündlichen Prüfungen, False zum Deaktivieren",
+      "world": "Nur auf diese Welt anwenden (weglassen für alle deine Konten)"
+    }
+  },
+  "gt_sf_status": {
+    "description": "Deine verbundenen Shakes & Fidget-Konten und deren Prüfstatus anzeigen."
+  },
+  "gt_alerts_panel": {
+    "description": "Alarm-Panel für eine Welt posten (Kanal, Ping-Rolle, Verteidigung stummschalten).",
+    "options": {
+      "world_name": "Welt, für die diese Alarmkonfiguration gilt (z.B. eu20)"
+    }
+  },
+  "gt_absence_check": {
+    "description": "Neuesten Gildenangriffs-Bericht manuell abrufen und Abwesende posten (zum Testen).",
+    "options": {
+      "swiat": "Welche Welt geprüft werden soll (braucht Sentry-Konto + Kanal)"
+    }
+  }
+}
