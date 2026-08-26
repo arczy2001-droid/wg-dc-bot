@@ -235,6 +235,17 @@ async def recruitment_panel(
     remove_role: Optional[discord.Role] = None,
     custom_text: Optional[str] = None,
 ):
+    # Acknowledge the interaction FIRST, before any DB/network work. This
+    # command does a DB read+write and posts an embed with a view before it
+    # used to reply — if that combined work ever took long enough to miss
+    # Discord's ~3s ack window, the later interaction.response.send_message()
+    # call would fail with "Interaction has already been acknowledged"
+    # (error 40060). Deferring immediately closes that gap; the rest of the
+    # command must use interaction.followup.send(...) instead of
+    # interaction.response.send_message(...) from here on, since response
+    # is now considered "done".
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
     member_roles = [r for r in (member_role, member_role_2, member_role_3, member_role_4) if r]
 
     # remove_role and custom_text use PARTIAL-UPDATE semantics: if this
@@ -280,16 +291,27 @@ async def recruitment_panel(
         confirmation += f" Role removed on acceptance: {role_obj.mention if role_obj else remove_role_id}."
     if custom_text is not None:
         confirmation += " Custom panel text saved for this server."
-    await interaction.response.send_message(confirmation, ephemeral=True)
+    await interaction.followup.send(confirmation, ephemeral=True)
 
 
 @recruitment_panel.error
 async def recruitment_panel_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("❌ You need **Administrator** permission for this.", ephemeral=True)
+        msg = "❌ You need **Administrator** permission for this."
     else:
         print(f"recruitment_panel error: {error}")
-        await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
+        msg = "❌ Something went wrong."
+    # Guard against the interaction already having been responded to (e.g.
+    # defer() succeeded but a later step failed) — using response.send_message
+    # unconditionally here would itself raise the same 40060 error this fix
+    # addresses, just from the error handler instead of the command body.
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except discord.HTTPException:
+        pass  # interaction is unrecoverable at this point; nothing more we can do
 
 
 # ---------------------------------------------------------------------------
