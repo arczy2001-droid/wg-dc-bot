@@ -545,6 +545,8 @@ class OfficerDecisionView(discord.ui.View):
         for child in self.children:
             child.disabled = True
 
+        role_warnings = []
+
         if applicant:
             # Assign configured ranks
             if config and config["member_role_ids"]:
@@ -555,6 +557,10 @@ class OfficerDecisionView(discord.ui.View):
                         await applicant.add_roles(*roles, reason=f"Guild application #{self.app_id} accepted")
                     except discord.Forbidden:
                         print(f"recruitment: missing permission to add role(s) to {applicant}")
+                        role_warnings.append(
+                            f"couldn't add {', '.join(r.mention for r in roles)} — "
+                            f"make sure the bot's role is positioned ABOVE these roles in Server Settings > Roles"
+                        )
 
             # Remove the configured "pending applicant" role, if any
             if config and config.get("remove_role_id"):
@@ -564,8 +570,13 @@ class OfficerDecisionView(discord.ui.View):
                         await applicant.remove_roles(role_to_remove, reason=f"Guild application #{self.app_id} accepted")
                     except discord.Forbidden:
                         print(f"recruitment: missing permission to remove role from {applicant}")
+                        role_warnings.append(
+                            f"couldn't remove {role_to_remove.mention} — the bot's role must be positioned "
+                            f"ABOVE {role_to_remove.mention} in Server Settings > Roles"
+                        )
                 else:
                     print(f"recruitment: configured remove_role_id {config['remove_role_id']} no longer exists on this server")
+                    role_warnings.append("the configured 'remove on accept' role no longer exists on this server")
 
             # Rename to in-game nickname
             try:
@@ -585,9 +596,10 @@ class OfficerDecisionView(discord.ui.View):
                 pass  # applicant has DMs closed — not fatal
 
         await interaction.response.edit_message(view=self)
-        await interaction.followup.send(
-            f"✅ Application **accepted** by {interaction.user.mention}.", ephemeral=False
-        )
+        confirmation = f"✅ Application **accepted** by {interaction.user.mention}."
+        if role_warnings:
+            confirmation += "\n⚠️ " + "\n⚠️ ".join(role_warnings)
+        await interaction.followup.send(confirmation, ephemeral=False)
 
         await _archive_or_lock(interaction, app)
 
