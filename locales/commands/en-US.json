@@ -144,7 +144,9 @@
       "member_role": "Optional: role automatically given to accepted applicants",
       "member_role_2": "Optional: additional rank given to accepted applicants",
       "member_role_3": "Optional: additional rank given to accepted applicants",
-      "member_role_4": "Optional: additional rank given to accepted applicants"
+      "member_role_4": "Optional: additional rank given to accepted applicants",
+      "remove_role": "Optional: role automatically REMOVED from the applicant when accepted (e.g. 'Applicant')",
+      "custom_text": "Optional: replace the panel's body text for this server. Omit to keep your last saved text."
     }
   },
   "gt_sf_login": {

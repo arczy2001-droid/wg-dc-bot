@@ -144,7 +144,9 @@
       "member_role": "Optional: Rolle, die angenommenen Bewerbern automatisch vergeben wird",
       "member_role_2": "Optional: zusätzlicher Rang, der angenommenen Bewerbern vergeben wird",
       "member_role_3": "Optional: zusätzlicher Rang, der angenommenen Bewerbern vergeben wird",
-      "member_role_4": "Optional: zusätzlicher Rang, der angenommenen Bewerbern vergeben wird"
+      "member_role_4": "Optional: zusätzlicher Rang, der angenommenen Bewerbern vergeben wird",
+      "remove_role": "Optional: Rolle, die dem Bewerber bei Annahme automatisch ENTFERNT wird (z.B. 'Bewerber')",
+      "custom_text": "Optional: Panel-Text für diesen Server ersetzen. Weglassen, um alten Text zu behalten."
     }
   },
   "gt_sf_login": {
