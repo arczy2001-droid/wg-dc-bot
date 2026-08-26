@@ -83,6 +83,16 @@ def init_recruitment_tables() -> None:
     for col in MEMBER_ROLE_SLOTS[1:]:
         if col not in existing_cols:
             conn.execute(f"ALTER TABLE recruitment_config ADD COLUMN {col} TEXT")
+
+    # remove_role_id: a role stripped from the applicant on acceptance (e.g.
+    # an "Unverified"/"Applicant" role assigned on join). panel_text: the
+    # per-guild custom body text for the recruitment panel embed — NULL
+    # means "use the built-in default text" (see DEFAULT_PANEL_TEXT below).
+    if "remove_role_id" not in existing_cols:
+        conn.execute("ALTER TABLE recruitment_config ADD COLUMN remove_role_id TEXT")
+    if "panel_text" not in existing_cols:
+        conn.execute("ALTER TABLE recruitment_config ADD COLUMN panel_text TEXT")
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS recruitment_apps (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,21 +114,39 @@ def init_recruitment_tables() -> None:
     conn.close()
 
 
+DEFAULT_PANEL_TEXT = (
+    "We're always looking for strong and active players!\n\n"
+    "**What we offer:**\n"
+    "• An active, discord community\n"
+    "• Help at every stage of the game\n"
+    "• Experienced management\n\n"
+    "**What we look for:**\n"
+    "• Regular activity and participation\n"
+    "• Shroomers\n"
+    "• A positive attitude and teamwork\n\n"
+    "Click the button below to submit your application. An officer will "
+    "review it and reach out to you shortly!"
+)
+
+
 def _get_config(guild_id: int) -> Optional[dict]:
     conn = sqlite3.connect(DB_PATH)
     row = conn.execute(
-        f"SELECT channel_id, officer_role_id, {', '.join(MEMBER_ROLE_SLOTS)} "
-        f"FROM recruitment_config WHERE guild_id=?",
+        f"SELECT channel_id, officer_role_id, {', '.join(MEMBER_ROLE_SLOTS)}, "
+        f"remove_role_id, panel_text FROM recruitment_config WHERE guild_id=?",
         (str(guild_id),)
     ).fetchone()
     conn.close()
     if not row:
         return None
-    member_role_ids = [r for r in row[2:2 + len(MEMBER_ROLE_SLOTS)] if r]
+    n = len(MEMBER_ROLE_SLOTS)
+    member_role_ids = [r for r in row[2:2 + n] if r]
     return {
         "channel_id": row[0],
         "officer_role_id": row[1],
         "member_role_ids": member_role_ids,
+        "remove_role_id": row[2 + n],
+        "panel_text": row[3 + n],
     }
 
 
@@ -193,6 +221,8 @@ def _get_pending_application_ids() -> list[int]:
     member_role_2="Optional: additional rank given to accepted applicants",
     member_role_3="Optional: additional rank given to accepted applicants",
     member_role_4="Optional: additional rank given to accepted applicants",
+    remove_role="Optional: role automatically REMOVED from the applicant when accepted (e.g. 'Applicant')",
+    custom_text="Optional: replace the panel's body text for this server. Omit to keep your last saved text.",
 )
 async def recruitment_panel(
     interaction: discord.Interaction,
@@ -202,11 +232,24 @@ async def recruitment_panel(
     member_role_2: Optional[discord.Role] = None,
     member_role_3: Optional[discord.Role] = None,
     member_role_4: Optional[discord.Role] = None,
+    remove_role: Optional[discord.Role] = None,
+    custom_text: Optional[str] = None,
 ):
     member_roles = [r for r in (member_role, member_role_2, member_role_3, member_role_4) if r]
 
+    # remove_role and custom_text use PARTIAL-UPDATE semantics: if this
+    # invocation doesn't specify them, we keep whatever was configured
+    # before (e.g. running the command again just to add a rank shouldn't
+    # silently wipe out a previously-written custom announcement). This is
+    # deliberately different from channel/officer_role/member_roles below,
+    # which are always fully replaced by whatever this call provides — that
+    # matches this command's existing behaviour and wasn't part of the ask.
+    existing = _get_config(interaction.guild_id)
+    remove_role_id = str(remove_role.id) if remove_role else (existing["remove_role_id"] if existing else None)
+    panel_text = custom_text if custom_text is not None else (existing["panel_text"] if existing else None)
+
     conn = sqlite3.connect(DB_PATH)
-    columns = ("guild_id", "channel_id", "officer_role_id", *MEMBER_ROLE_SLOTS)
+    columns = ("guild_id", "channel_id", "officer_role_id", *MEMBER_ROLE_SLOTS, "remove_role_id", "panel_text")
     placeholders = ", ".join("?" for _ in columns)
     update_clause = ", ".join(f"{c} = excluded.{c}" for c in columns if c != "guild_id")
     role_ids = [str(r.id) for r in member_roles] + [None] * (len(MEMBER_ROLE_SLOTS) - len(member_roles))
@@ -214,26 +257,14 @@ async def recruitment_panel(
         f"""INSERT INTO recruitment_config ({', '.join(columns)})
            VALUES ({placeholders})
            ON CONFLICT(guild_id) DO UPDATE SET {update_clause}""",
-        (str(interaction.guild_id), str(channel.id), str(officer_role.id), *role_ids)
+        (str(interaction.guild_id), str(channel.id), str(officer_role.id), *role_ids, remove_role_id, panel_text)
     )
     conn.commit()
     conn.close()
 
     embed = discord.Embed(
         title="⚔️ Join Our Guild!",
-        description=(
-            "We're always looking for strong and active players!\n\n"
-            "**What we offer:**\n"
-            "• An active, discord community\n"
-            "• Help at every stage of the game\n"
-            "• Experienced management\n\n"
-            "**What we look for:**\n"
-            "• Regular activity and participation\n"
-            "• Shroomers\n"
-            "• A positive attitude and teamwork\n\n"
-            "Click the button below to submit your application. An officer will "
-            "review it and reach out to you shortly!"
-        ),
+        description=panel_text or DEFAULT_PANEL_TEXT,
         color=discord.Color.gold(),
     )
     embed.set_footer(text="Applications are reviewed privately by our officers.")
@@ -244,6 +275,11 @@ async def recruitment_panel(
     confirmation = f"✅ Recruitment panel posted in {channel.mention}. Officer role: {officer_role.mention}."
     if member_roles:
         confirmation += f" Ranks granted on acceptance: {', '.join(r.mention for r in member_roles)}."
+    if remove_role_id:
+        role_obj = interaction.guild.get_role(int(remove_role_id))
+        confirmation += f" Role removed on acceptance: {role_obj.mention if role_obj else remove_role_id}."
+    if custom_text is not None:
+        confirmation += " Custom panel text saved for this server."
     await interaction.response.send_message(confirmation, ephemeral=True)
 
 
@@ -486,6 +522,17 @@ class OfficerDecisionView(discord.ui.View):
                         await applicant.add_roles(*roles, reason=f"Guild application #{self.app_id} accepted")
                     except discord.Forbidden:
                         print(f"recruitment: missing permission to add role(s) to {applicant}")
+
+            # Remove the configured "pending applicant" role, if any
+            if config and config.get("remove_role_id"):
+                role_to_remove = interaction.guild.get_role(int(config["remove_role_id"]))
+                if role_to_remove:
+                    try:
+                        await applicant.remove_roles(role_to_remove, reason=f"Guild application #{self.app_id} accepted")
+                    except discord.Forbidden:
+                        print(f"recruitment: missing permission to remove role from {applicant}")
+                else:
+                    print(f"recruitment: configured remove_role_id {config['remove_role_id']} no longer exists on this server")
 
             # Rename to in-game nickname
             try:
