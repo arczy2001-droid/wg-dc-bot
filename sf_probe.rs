@@ -85,6 +85,23 @@ async fn main() {
                         // session since each character can genuinely be on
                         // a different real server.
                         let session_server = server_host(&session);
+
+                        // PERFORMANCE FIX: skip the network-bound
+                        // send_command(Update) call entirely for any
+                        // session that isn't the one we actually want.
+                        // Previously this ran Update for EVERY character on
+                        // the account (a real network round-trip each) even
+                        // though the caller only ever keeps the one whose
+                        // server matches — on an 11-character account that
+                        // meant 11 sequential round-trips just to use 1,
+                        // which was slow enough to blow past the Python
+                        // side's timeout. Comparing here costs nothing (the
+                        // server is already known) and cuts the common case
+                        // down to exactly one real network call.
+                        if session_server.to_lowercase() != server.to_lowercase() {
+                            continue;
+                        }
+
                         if session.send_command(Command::Update).await.is_err() {
                             continue;
                         }
