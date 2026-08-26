@@ -222,7 +222,7 @@ def _get_pending_application_ids() -> list[int]:
     member_role_3="Optional: additional rank given to accepted applicants",
     member_role_4="Optional: additional rank given to accepted applicants",
     remove_role="Optional: role automatically REMOVED from the applicant when accepted (e.g. 'Applicant')",
-    custom_text="Optional: replace the panel's body text for this server. Omit to keep your last saved text.",
+    custom_text="Optional: replace the panel body text. Use \\n for line breaks. Omit to keep saved text.",
 )
 async def recruitment_panel(
     interaction: discord.Interaction,
@@ -257,7 +257,18 @@ async def recruitment_panel(
     # matches this command's existing behaviour and wasn't part of the ask.
     existing = _get_config(interaction.guild_id)
     remove_role_id = str(remove_role.id) if remove_role else (existing["remove_role_id"] if existing else None)
-    panel_text = custom_text if custom_text is not None else (existing["panel_text"] if existing else None)
+    # Discord's slash-command STRING parameter is a single-line input box —
+    # there is no way for an admin to press Enter and produce a real newline
+    # character inside it. Typing "\n" is the only practical way to indicate
+    # a line break, but that arrives here as the two literal characters
+    # backslash+n, not an actual newline — left as-is, the embed would show
+    # the literal text "\n" instead of breaking the line (or, if someone
+    # then strips the backslash-n out entirely, everything collapses into
+    # one run-on paragraph). Converting it here means both problems don't
+    # happen, and it's done once at save time so every future render of the
+    # stored text is already correct without redoing this conversion.
+    normalized_text = custom_text.replace("\\n", "\n") if custom_text is not None else None
+    panel_text = normalized_text if normalized_text is not None else (existing["panel_text"] if existing else None)
 
     conn = sqlite3.connect(DB_PATH)
     columns = ("guild_id", "channel_id", "officer_role_id", *MEMBER_ROLE_SLOTS, "remove_role_id", "panel_text")
