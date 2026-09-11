@@ -69,47 +69,89 @@ MEMBER_ROLE_SLOTS = ("member_role_id", "member_role_id_2", "member_role_id_3", "
 def init_recruitment_tables() -> None:
     """Idempotent — safe to call on every startup."""
     conn = sqlite3.connect(DB_PATH)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS recruitment_config (
-            guild_id       TEXT PRIMARY KEY,
-            channel_id     TEXT NOT NULL,
-            officer_role_id TEXT NOT NULL,
-            member_role_id TEXT
-        )
-    """)
-    # Migration: older DBs only have the single member_role_id column — add
-    # the extra rank slots if they're missing so existing configs survive.
-    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(recruitment_config)")}
-    for col in MEMBER_ROLE_SLOTS[1:]:
-        if col not in existing_cols:
-            conn.execute(f"ALTER TABLE recruitment_config ADD COLUMN {col} TEXT")
 
-    # remove_role_id: a role stripped from the applicant on acceptance (e.g.
-    # an "Unverified"/"Applicant" role assigned on join). panel_text: the
-    # per-guild custom body text for the recruitment panel embed — NULL
-    # means "use the built-in default text" (see DEFAULT_PANEL_TEXT below).
-    if "remove_role_id" not in existing_cols:
-        conn.execute("ALTER TABLE recruitment_config ADD COLUMN remove_role_id TEXT")
-    if "panel_text" not in existing_cols:
-        conn.execute("ALTER TABLE recruitment_config ADD COLUMN panel_text TEXT")
+    # recruitment_config used to be keyed by guild_id ALONE, meaning a server
+    # with multiple application channels (e.g. one per game world) had every
+    # /gt_recruitment_panel run OVERWRITE the same single row — so every
+    # panel's "Apply to Guild" button ended up using whichever channel was
+    # configured MOST RECENTLY, regardless of which panel was actually
+    # clicked. Fixed by keying on (guild_id, channel_id) instead: each
+    # posted panel gets its own independent config (channel, officer role,
+    # ranks, remove role, panel text).
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(recruitment_config)")}
+    if existing_cols:
+        pk_cols = [row[1] for row in conn.execute("PRAGMA table_info(recruitment_config)") if row[5] > 0]
+        if set(pk_cols) != {"guild_id", "channel_id"}:
+            print("recruitment: migrating recruitment_config to per-channel schema...")
+            conn.execute("ALTER TABLE recruitment_config RENAME TO recruitment_config_old")
+            conn.execute("""
+                CREATE TABLE recruitment_config (
+                    guild_id         TEXT NOT NULL,
+                    channel_id       TEXT NOT NULL,
+                    officer_role_id  TEXT NOT NULL,
+                    member_role_id   TEXT,
+                    member_role_id_2 TEXT,
+                    member_role_id_3 TEXT,
+                    member_role_id_4 TEXT,
+                    remove_role_id   TEXT,
+                    panel_text       TEXT,
+                    PRIMARY KEY (guild_id, channel_id)
+                )
+            """)
+            old_cols = {row[1] for row in conn.execute("PRAGMA table_info(recruitment_config_old)")}
+            # Old rows may predate member_role_id_2/3/4, remove_role_id, or
+            # panel_text (each was added in earlier migrations) — select only
+            # what actually exists, defaulting the rest to NULL.
+            select_cols = ["guild_id", "channel_id", "officer_role_id", "member_role_id"]
+            for c in ("member_role_id_2", "member_role_id_3", "member_role_id_4", "remove_role_id", "panel_text"):
+                select_cols.append(c if c in old_cols else "NULL")
+            conn.execute(f"""
+                INSERT INTO recruitment_config
+                SELECT {', '.join(select_cols)} FROM recruitment_config_old
+            """)
+            conn.execute("DROP TABLE recruitment_config_old")
+            print("recruitment: migration complete — existing config preserved, now scoped per channel.")
+    else:
+        conn.execute("""
+            CREATE TABLE recruitment_config (
+                guild_id         TEXT NOT NULL,
+                channel_id       TEXT NOT NULL,
+                officer_role_id  TEXT NOT NULL,
+                member_role_id   TEXT,
+                member_role_id_2 TEXT,
+                member_role_id_3 TEXT,
+                member_role_id_4 TEXT,
+                remove_role_id   TEXT,
+                panel_text       TEXT,
+                PRIMARY KEY (guild_id, channel_id)
+            )
+        """)
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS recruitment_apps (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            guild_id      TEXT NOT NULL,
-            applicant_id  TEXT NOT NULL,
-            thread_id     TEXT,
-            nickname      TEXT NOT NULL,
-            char_class    TEXT NOT NULL,
-            playstyle     TEXT NOT NULL,
-            experience    TEXT NOT NULL,
-            status        TEXT NOT NULL DEFAULT 'Pending',  -- Pending | Accepted | Rejected
-            reason        TEXT,
-            created_at    TIMESTAMP NOT NULL,
-            decided_by    TEXT,
-            decided_at    TIMESTAMP
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id         TEXT NOT NULL,
+            applicant_id     TEXT NOT NULL,
+            thread_id        TEXT,
+            panel_channel_id TEXT,
+            nickname         TEXT NOT NULL,
+            char_class       TEXT NOT NULL,
+            playstyle        TEXT NOT NULL,
+            experience       TEXT NOT NULL,
+            status           TEXT NOT NULL DEFAULT 'Pending',  -- Pending | Accepted | Rejected
+            reason           TEXT,
+            created_at       TIMESTAMP NOT NULL,
+            decided_by       TEXT,
+            decided_at       TIMESTAMP
         )
     """)
+    # Migration: older DBs won't have panel_channel_id — add it if missing.
+    # Existing Pending applications from before this migration simply won't
+    # have a resolvable panel config (handled gracefully, see _check_officer).
+    apps_cols = {row[1] for row in conn.execute("PRAGMA table_info(recruitment_apps)")}
+    if "panel_channel_id" not in apps_cols:
+        conn.execute("ALTER TABLE recruitment_apps ADD COLUMN panel_channel_id TEXT")
+
     conn.commit()
     conn.close()
 
@@ -129,12 +171,12 @@ DEFAULT_PANEL_TEXT = (
 )
 
 
-def _get_config(guild_id: int) -> Optional[dict]:
+def _get_config(guild_id: int, channel_id: int) -> Optional[dict]:
     conn = sqlite3.connect(DB_PATH)
     row = conn.execute(
         f"SELECT channel_id, officer_role_id, {', '.join(MEMBER_ROLE_SLOTS)}, "
-        f"remove_role_id, panel_text FROM recruitment_config WHERE guild_id=?",
-        (str(guild_id),)
+        f"remove_role_id, panel_text FROM recruitment_config WHERE guild_id=? AND channel_id=?",
+        (str(guild_id), str(channel_id))
     ).fetchone()
     conn.close()
     if not row:
@@ -150,15 +192,22 @@ def _get_config(guild_id: int) -> Optional[dict]:
     }
 
 
-def _save_application(guild_id: int, applicant_id: int, nickname: str, char_class: str,
-                       playstyle: str, experience: str) -> int:
-    """Inserts a new Pending application and returns its row id."""
+def _save_application(guild_id: int, applicant_id: int, panel_channel_id: int, nickname: str,
+                       char_class: str, playstyle: str, experience: str) -> int:
+    """Inserts a new Pending application and returns its row id.
+
+    panel_channel_id records WHICH panel this application came from — needed
+    because the officer decision buttons later run inside a created thread
+    (a different channel_id from the panel), so they can't just read
+    interaction.channel_id to know which config applies.
+    """
     conn = sqlite3.connect(DB_PATH)
     cur = conn.execute(
         """INSERT INTO recruitment_apps
-           (guild_id, applicant_id, nickname, char_class, playstyle, experience, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'Pending', ?)""",
-        (str(guild_id), str(applicant_id), nickname, char_class, playstyle, experience, datetime.now().isoformat())
+           (guild_id, applicant_id, panel_channel_id, nickname, char_class, playstyle, experience, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', ?)""",
+        (str(guild_id), str(applicant_id), str(panel_channel_id), nickname, char_class, playstyle, experience,
+         datetime.now().isoformat())
     )
     conn.commit()
     app_id = cur.lastrowid
@@ -176,7 +225,8 @@ def _set_thread_id(app_id: int, thread_id: int) -> None:
 def _get_application(app_id: int) -> Optional[dict]:
     conn = sqlite3.connect(DB_PATH)
     row = conn.execute(
-        """SELECT guild_id, applicant_id, thread_id, nickname, char_class, playstyle, experience, status
+        """SELECT guild_id, applicant_id, thread_id, panel_channel_id, nickname, char_class, playstyle,
+                  experience, status
            FROM recruitment_apps WHERE id=?""",
         (app_id,)
     ).fetchone()
@@ -184,9 +234,9 @@ def _get_application(app_id: int) -> Optional[dict]:
     if not row:
         return None
     return {
-        "guild_id": row[0], "applicant_id": row[1], "thread_id": row[2],
-        "nickname": row[3], "char_class": row[4], "playstyle": row[5],
-        "experience": row[6], "status": row[7],
+        "guild_id": row[0], "applicant_id": row[1], "thread_id": row[2], "panel_channel_id": row[3],
+        "nickname": row[4], "char_class": row[5], "playstyle": row[6],
+        "experience": row[7], "status": row[8],
     }
 
 
@@ -255,7 +305,7 @@ async def recruitment_panel(
     # deliberately different from channel/officer_role/member_roles below,
     # which are always fully replaced by whatever this call provides — that
     # matches this command's existing behaviour and wasn't part of the ask.
-    existing = _get_config(interaction.guild_id)
+    existing = _get_config(interaction.guild_id, channel.id)
     remove_role_id = str(remove_role.id) if remove_role else (existing["remove_role_id"] if existing else None)
     # Discord's slash-command STRING parameter is a single-line input box —
     # there is no way for an admin to press Enter and produce a real newline
@@ -273,12 +323,12 @@ async def recruitment_panel(
     conn = sqlite3.connect(DB_PATH)
     columns = ("guild_id", "channel_id", "officer_role_id", *MEMBER_ROLE_SLOTS, "remove_role_id", "panel_text")
     placeholders = ", ".join("?" for _ in columns)
-    update_clause = ", ".join(f"{c} = excluded.{c}" for c in columns if c != "guild_id")
+    update_clause = ", ".join(f"{c} = excluded.{c}" for c in columns if c not in ("guild_id", "channel_id"))
     role_ids = [str(r.id) for r in member_roles] + [None] * (len(MEMBER_ROLE_SLOTS) - len(member_roles))
     conn.execute(
         f"""INSERT INTO recruitment_config ({', '.join(columns)})
            VALUES ({placeholders})
-           ON CONFLICT(guild_id) DO UPDATE SET {update_clause}""",
+           ON CONFLICT(guild_id, channel_id) DO UPDATE SET {update_clause}""",
         (str(interaction.guild_id), str(channel.id), str(officer_role.id), *role_ids, remove_role_id, panel_text)
     )
     conn.commit()
@@ -340,13 +390,16 @@ class RecruitmentPanelView(discord.ui.View):
         custom_id="recruitment_apply_button",  # fixed id required for persistence
     )
     async def apply_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        config = _get_config(interaction.guild_id)
+        # interaction.channel_id is the channel THIS panel/button lives in —
+        # resolving config here (rather than by guild_id alone) is what
+        # makes multiple independent panels per server work correctly.
+        config = _get_config(interaction.guild_id, interaction.channel_id)
         if not config:
             await interaction.response.send_message(
-                "❌ The recruitment system isn't configured on this server.", ephemeral=True
+                "❌ The recruitment system isn't configured for this channel.", ephemeral=True
             )
             return
-        await interaction.response.send_modal(ApplicationModal())
+        await interaction.response.send_modal(ApplicationModal(panel_channel_id=interaction.channel_id))
 
 
 # ---------------------------------------------------------------------------
@@ -380,16 +433,24 @@ class ApplicationModal(discord.ui.Modal, title="Guild Application"):
         required=True,
     )
 
+    def __init__(self, panel_channel_id: int):
+        super().__init__()
+        # Passed explicitly from apply_button rather than re-derived from
+        # interaction.channel_id in on_submit — avoids relying on an
+        # assumption about whether a modal submission's interaction always
+        # carries the same channel context as the component that opened it.
+        self.panel_channel_id = panel_channel_id
+
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
-        config = _get_config(interaction.guild_id)
+        config = _get_config(interaction.guild_id, self.panel_channel_id)
         if not config:
             await interaction.followup.send("❌ Recruitment system isn't configured.", ephemeral=True)
             return
 
         app_id = _save_application(
-            interaction.guild_id, interaction.user.id,
+            interaction.guild_id, interaction.user.id, self.panel_channel_id,
             self.nickname.value, self.char_class.value, self.playstyle.value, self.experience.value
         )
 
@@ -523,7 +584,16 @@ class OfficerDecisionView(discord.ui.View):
         if not app:
             await interaction.response.send_message("❌ Application not found (may have been deleted).", ephemeral=True)
             return None
-        config = _get_config(interaction.guild_id)
+        # Must resolve config via the ORIGINATING panel's channel, not
+        # interaction.channel_id — these buttons run inside a created
+        # thread, which has its own distinct channel_id from the panel.
+        if not app.get("panel_channel_id"):
+            await interaction.response.send_message(
+                "❌ This application predates per-channel configuration and can't be resolved. "
+                "Please handle it manually.", ephemeral=True
+            )
+            return None
+        config = _get_config(app["guild_id"], int(app["panel_channel_id"]))
         if not config or not _is_officer(interaction, config["officer_role_id"]):
             await interaction.response.send_message("❌ Only officers can use this.", ephemeral=True)
             return None
@@ -539,7 +609,7 @@ class OfficerDecisionView(discord.ui.View):
             return
 
         applicant = interaction.guild.get_member(int(app["applicant_id"]))
-        config = _get_config(interaction.guild_id)
+        config = _get_config(app["guild_id"], int(app["panel_channel_id"]))
 
         _set_decision(self.app_id, "Accepted", interaction.user.id)
         for child in self.children:
@@ -616,7 +686,12 @@ class OfficerDecisionView(discord.ui.View):
         if not app:
             await interaction.response.send_message("❌ Application not found.", ephemeral=True)
             return
-        config = _get_config(interaction.guild_id)
+        if not app.get("panel_channel_id"):
+            await interaction.response.send_message(
+                "❌ This application predates per-channel configuration and can't be resolved.", ephemeral=True
+            )
+            return
+        config = _get_config(app["guild_id"], int(app["panel_channel_id"]))
         if not config or not _is_officer(interaction, config["officer_role_id"]):
             await interaction.response.send_message("❌ Only officers can use this.", ephemeral=True)
             return
