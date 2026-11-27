@@ -12,6 +12,7 @@ import asyncio
 import difflib
 import aiohttp
 from urllib.parse import urlparse, quote
+from deep_translator import GoogleTranslator
 
 from setup_wizard import (
     setup as setup_command,
@@ -60,6 +61,59 @@ from world_registry import (
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 OCR_API_KEY = os.getenv("OCR_SPACE_API_KEY")
 DB_PATH = "gildia.db"
+
+
+def _translate_sync(text: str) -> str:
+    return GoogleTranslator(source="auto", target="pl").translate(text)
+
+
+async def translate_to_pl(text: str) -> str:
+    return await asyncio.to_thread(_translate_sync, text)
+
+
+class TranslateView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Przetłumacz",
+        style=discord.ButtonStyle.success,
+        custom_id="wg_dc_bot:translate_post_pl:v1",
+    )
+    async def translate_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        source_text = (interaction.message.content or "").strip()
+
+        if not source_text and interaction.message.embeds:
+            embed = interaction.message.embeds[0]
+            source_text = (embed.description or "").strip()
+
+        if not source_text:
+            await interaction.response.send_message(
+                "❌ Nie znaleziono tekstu do przetłumaczenia w tym poście.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            translated = await translate_to_pl(source_text)
+        except Exception as e:
+            await interaction.followup.send(
+                f"❌ Błąd podczas tłumaczenia: `{e}`",
+                ephemeral=True,
+            )
+            return
+
+        result_embed = discord.Embed(
+            title="🇵🇱 Tłumaczenie (PL)",
+            description=(translated or "")[:4096],
+            color=discord.Color.green(),
+        )
+        await interaction.followup.send(embed=result_embed, ephemeral=True)
+
 
 #    Uwaga: tabela 'ustawienia' (kanal_glowy / kanal_logow) zostala zastapiona
 #    przez 'guild_config' z setup_wizard.py — nie tworzymy jej tu juz dla nowych instalacji.
@@ -227,6 +281,186 @@ async def is_malicious_domain(domena, session):
                 data = await response.json()
                 return data.get("category") in ("malware", "phishing")
             return False
+    except Exception as e:
+        print(f"Error checking domain {domena} on FishFish: {e}")
+        return False
+
+#    WYKRYWANIE SCAMÓW NA OBRAZKACH (np. fałszywe kasyna crypto / giveaway)
+SCAM_KEYWORDS = [
+    "withdrawal success", "activate code for bonus", "crypto casino",
+    "deposit bonus", "rakeback", "claim your bonus", "airdrop claim",
+    "free nitro", "discord nitro free", "steam gift", "giveaway winner",
+    "selected as a winner", "claim now", "limited offer", "exclusive bonus",
+    "trc20", "bep20", "erc20", "withdraw your winnings", "enter the promo code",
+    "select a withdraw method", "select crypto to withdraw",
+]
+
+def policz_wskazniki_scamu(tekst: str) -> int:
+    tekst = tekst.lower()
+    return sum(1 for kw in SCAM_KEYWORDS if kw in tekst)
+
+
+# ---------------------------------------------------------------------------
+# PERCEPTUAL IMAGE HASHING
+# Uses imagehash.phash() which produces a 64-bit fingerprint measuring
+# *visual similarity* — two images that look the same to the human eye will
+# have a Hamming distance <= HASH_THRESHOLD even if they've been resized,
+# lightly compressed, or colour-tweaked by the spammer.
+#
+# Install on your VPS: pip install imagehash Pillow
+# ---------------------------------------------------------------------------
+HASH_THRESHOLD = 8  # max Hamming distance to count as "same image" (0-64).
+                    # 8 is a good balance: catches re-saves/resizes, won't
+                    # flag unrelated images. Lower = stricter, higher = looser.
+
+def compute_phash(image_path: str) -> Optional[str]:
+    """Returns the hex pHash string, or None if the file can't be read."""
+    try:
+        import imagehash
+        from PIL import Image
+        h = imagehash.phash(Image.open(image_path))
+        return str(h)  # hex string, e.g. "f8e0c0c0e0f0f8f8"
+    except Exception as e:
+        print(f"pHash error on {image_path}: {e}")
+        return None
+
+def is_hash_blocked(phash_str: str) -> bool:
+    """True if this image's perceptual hash is within HASH_THRESHOLD of any
+    stored blocked hash. Iterates the full blocklist — fine at typical sizes
+    (hundreds of entries); revisit with an index if it grows to tens of thousands."""
+    try:
+        import imagehash
+        incoming = imagehash.hex_to_hash(phash_str)
+        conn = sqlite3.connect(DB_PATH)
+        rows = conn.execute("SELECT hash_value FROM image_blocklist").fetchall()
+        conn.close()
+        for (stored_hex,) in rows:
+            try:
+                stored = imagehash.hex_to_hash(stored_hex)
+                if (incoming - stored) <= HASH_THRESHOLD:
+                    return True
+            except Exception:
+                continue
+        return False
+    except Exception as e:
+        print(f"Hash blocklist check error: {e}")
+        return False
+
+def store_phash(phash_str: str, guild_id: int, reason: str = "auto-detected scam image") -> None:
+    """Saves a new hash to the global blocklist. Safe to call even if the
+    hash already exists (INSERT OR IGNORE)."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "INSERT OR IGNORE INTO image_blocklist VALUES (?, ?, ?, ?)",
+        (phash_str, str(guild_id), datetime.now().isoformat(), reason)
+    )
+    conn.commit()
+    conn.close()
+
+async def wyslij_log(guild_id: str, tytul: str, kolor: discord.Color, autor: discord.abc.User, pola: list):
+    """Wspólna funkcja do logowania (phishing / scam image / deleted message). Czyta logs_channel z guild_config."""
+    conn = sqlite3.connect("gildia.db")
+    res = conn.cursor().execute(
+        "SELECT logs_channel FROM guild_config WHERE guild_id=?", (guild_id,)
+    ).fetchone()
+    conn.close()
+    if not res or not res[0]:
+        return
+    try:
+        kanal_logow = bot.get_channel(int(res[0]))
+        if not kanal_logow:
+            return
+        embed = discord.Embed(title=tytul, color=kolor)
+        embed.set_author(name=f"{autor.display_name} ({autor.id})", icon_url=autor.display_avatar.url)
+        for nazwa, wartosc, inline in pola:
+            embed.add_field(name=nazwa, value=wartosc, inline=inline)
+        await kanal_logow.send(embed=embed)
+    except Exception as e:
+        print(f"Error sending log embed: {e}")
+
+class MyBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix="!", intents=discord.Intents.all())
+
+    async def setup_hook(self):
+        init_db()
+        init_setup_table()
+        init_sf_events_tables()
+        init_recruitment_tables()
+        init_attack_alert_table()
+        init_sf_auth_tables()
+        # Must run AFTER every other init_*_table() above, so every table
+        # in world_registry's migration manifest already exists.
+        migrate_world_identifiers()
+        self.add_view(TranslateView())
+        self.tree.add_command(setup_command)
+        self.tree.add_command(setup_reset_command)
+        self.tree.add_command(settings_command)
+        self.tree.add_command(sf_events_setup)
+        self.tree.add_command(sf_events_toggle)
+        self.tree.add_command(sf_events_reload)
+        self.tree.add_command(events_command)
+        self.tree.add_command(recruitment_panel)
+        self.tree.add_command(gt_alerts_panel)
+        await register_persistent_views(self)  # re-attach buttons after restart
+        await register_alert_panel_views(self)  # re-attach alert-panel mute toggles after restart
+        await self.tree.set_translator(CommandTranslator())  # must be set before sync()
+        self.czyszczenie.start()
+        self.niedzielny_ranking.start()
+        for cmd in (gt_sf_login, gt_sf_logout, gt_sf_toggle_checks, gt_sf_status):
+            self.tree.add_command(cmd)
+        self.sf_monitor = SFMonitor(self)
+        self.sf_monitor.start()
+        init_absence_tables()
+        self.absence_monitor = AbsenceMonitor(self)
+        self.absence_monitor.start()
+        self.tree.add_command(gt_absence_check)
+        await self.tree.sync()
+
+    @tasks.loop(hours=1)
+    async def czyszczenie(self):
+        # Purge rows whose CREATION timestamp (data_wpisu) is older than 31 days.
+        # We deliberately use data_wpisu (not data_raportu) here so that a
+        # back-dated report submitted today is kept for the full retention window
+        # rather than being instantly purged because its data_raportu is old.
+        conn = sqlite3.connect("gildia.db")
+        granica = datetime.now() - timedelta(days=31)
+        conn.cursor().execute("DELETE FROM nieobecnosci WHERE data_wpisu <= ?", (granica,))
+        conn.cursor().execute("DELETE FROM raporty WHERE data_wpisu <= ?", (granica,))
+        conn.commit(); conn.close()
+
+    @tasks.loop(minutes=1)
+    async def niedzielny_ranking(self):
+        now = datetime.now()
+        conn = sqlite3.connect("gildia.db")
+
+        # Only worlds with an explicit schedule row get checked here; worlds that
+        # never had /gt_ranking_set run for them simply have automatic ranking
+        # off by default (no surprise messages for a world that never configured this).
+        due_worlds = conn.cursor().execute(
+            "SELECT guild_id, swiat FROM ranking_schedule WHERE enabled=1 AND weekday=? AND hour=? AND minute=?",
+            (now.weekday(), now.hour, now.minute)
+        ).fetchall()
+
+        for guild_id, swiat in due_worlds:
+            kanal_row = conn.cursor().execute(
+                "SELECT kanal_id FROM swiaty WHERE guild_id=? AND nazwa=?", (guild_id, swiat)
+            ).fetchone()
+            if not kanal_row:
+                continue  # world was deleted after its schedule was set; nothing to post to
+
+            kanal_id = kanal_row[0]
+            liczba_raportow = conn.cursor().execute(
+                "SELECT COUNT(*) FROM raporty WHERE guild_id=? AND swiat=?", (guild_id, swiat.lower())
+            ).fetchone()[0]
+            res = conn.cursor().execute(
+                "SELECT nick, COUNT(*) FROM nieobecnosci WHERE guild_id=? AND swiat=? GROUP BY nick ORDER BY COUNT(*) DESC",
+                (guild_id, swiat.lower())
+            ).fetchall()
+            txt = "\n".join([f"{r[0]}: {r[1]}x" for r in res]) if res else translator.get_text(int(guild_id), "wg.no_absences")
+
+            naglowek = f"📊 **Top absent players from {swiat.upper()} based on ({liczba_raportow}) raports:**"
+                  return False
     except Exception as e:
         print(f"Error checking domain {domena} on FishFish: {e}")
         return False
