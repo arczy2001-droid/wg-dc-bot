@@ -12,7 +12,7 @@ import asyncio
 import difflib
 import aiohttp
 from urllib.parse import urlparse, quote
-from deep_translator import GoogleTranslator
+from deep_translator import DeeplTranslator, MyMemoryTranslator
 
 from setup_wizard import (
     setup as setup_command,
@@ -61,14 +61,44 @@ from world_registry import (
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 OCR_API_KEY = os.getenv("OCR_SPACE_API_KEY")
 DB_PATH = "gildia.db"
+DEEPL_API_KEY = os.getenv("DEEPL_API_KEY")
+
+from deep_translator import DeeplTranslator, GoogleTranslator, MyMemoryTranslator
+
+DEEPL_API_KEY = os.getenv("DEEPL_API_KEY")
+
+# Cache w pamięci: message_id -> przetłumaczony tekst na PL
+_translation_cache: dict[int, str] = {}
 
 
 def _translate_sync(text: str) -> str:
-    return GoogleTranslator(source="auto", target="pl").translate(text)
+    if DEEPL_API_KEY:
+        try:
+            return DeeplTranslator(
+                api_key=DEEPL_API_KEY,
+                source="auto",
+                target="PL",
+                use_free_api=True,
+            ).translate(text)
+        except Exception as e:
+            print(f"[DeepL] Błąd tłumaczenia, przełączam na fallback: {e}")
+
+    try:
+        return GoogleTranslator(source="auto", target="pl").translate(text)
+    except Exception:
+        return MyMemoryTranslator(source="en-GB", target="pl-PL").translate(text)
 
 
-async def translate_to_pl(text: str) -> str:
-    return await asyncio.to_thread(_translate_sync, text)
+async def translate_to_pl(text: str, message_id: int | None = None) -> str:
+    if message_id is not None and message_id in _translation_cache:
+        return _translation_cache[message_id]
+
+    translated = await asyncio.to_thread(_translate_sync, text)
+
+    if message_id is not None and translated:
+        _translation_cache[message_id] = translated
+
+    return translated
 
 
 class TranslateView(discord.ui.View):
@@ -99,7 +129,8 @@ class TranslateView(discord.ui.View):
         await interaction.response.defer(ephemeral=True, thinking=True)
 
         try:
-            translated = await translate_to_pl(source_text)
+            msg_id = interaction.message.id if interaction.message else None
+            translated = await translate_to_pl(source_text, message_id=msg_id)
         except Exception as e:
             await interaction.followup.send(
                 f"❌ Błąd podczas tłumaczenia: `{e}`",
