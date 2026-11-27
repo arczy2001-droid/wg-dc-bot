@@ -504,8 +504,13 @@ bot = MyBot()
 
 @bot.tree.command(name="translator", description="Publikuje post z zielonym przyciskiem tłumaczenia na język polski")
 @app_commands.describe(tresc="Treść posta do opublikowania")
+@app_commands.checks.has_permissions(administrator=True)
 async def translator_post_command(interaction: discord.Interaction, tresc: str):
-    if not await sprawdz_pozwolenie(interaction):
+    if not interaction.guild or not isinstance(interaction.user, discord.Member) or not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "❌ Tej komendy mogą używać wyłącznie osoby z uprawnieniem **Administrator** na serwerze.",
+            ephemeral=True,
+        )
         return
     await interaction.response.send_message(content=tresc, view=TranslateView())
 
@@ -524,7 +529,10 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     if isinstance(root, WorldResolutionError):
         msg = str(root)
     elif isinstance(error, app_commands.MissingPermissions):
-        msg = "❌ You need the **Manage Server** permission to use this command."
+        if "administrator" in error.missing_permissions:
+            msg = "❌ You need the **Administrator** permission to use this command."
+        else:
+            msg = "❌ You need the **Manage Server** permission to use this command."
     elif isinstance(error, app_commands.CheckFailure):
         msg = "❌ You don't have permission to use this command here."
     else:
