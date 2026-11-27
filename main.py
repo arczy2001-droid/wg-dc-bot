@@ -71,22 +71,67 @@ DEEPL_API_KEY = os.getenv("DEEPL_API_KEY")
 _translation_cache: dict[int, str] = {}
 
 
-def _translate_sync(text: str) -> str:
+def _split_for_translator(text: str, max_len: int = 450) -> list[str]:
+    """Dzieli dłuższy tekst na mniejsze kawałki (np. pod limit 500 znaków MyMemoryTranslator)."""
+    text = text.strip()
+    if len(text) <= max_len:
+        return [text] if text else []
+
+    chunks: list[str] = []
+    current = ""
+    for line in text.splitlines(keepends=True):
+        if len(line) > max_len:
+            if current:
+                chunks.append(current.strip())
+                current = ""
+            start = 0
+            while start < len(line):
+                piece = line[start:start + max_len].strip()
+                if piece:
+                    chunks.append(piece)
+                start += max_len
+            continue
+
+        if len(current) + len(line) <= max_len:
+            current += line
+        else:
+            if current.strip():
+                chunks.append(current.strip())
+            current = line
+
+    if current.strip():
+        chunks.append(current.strip())
+    return chunks
+
+
+def _translate_chunk_sync(chunk: str) -> str:
     if DEEPL_API_KEY:
         try:
             return DeeplTranslator(
                 api_key=DEEPL_API_KEY,
                 source="auto",
-                target="PL",
+                target="pl",
                 use_free_api=True,
-            ).translate(text)
+            ).translate(chunk)
         except Exception as e:
             print(f"[DeepL] Błąd tłumaczenia, przełączam na fallback: {e}")
 
     try:
-        return GoogleTranslator(source="auto", target="pl").translate(text)
-    except Exception:
-        return MyMemoryTranslator(source="en-GB", target="pl-PL").translate(text)
+        translated = GoogleTranslator(source="auto", target="pl").translate(chunk)
+        if translated:
+            return translated
+    except Exception as e:
+        print(f"[GoogleTranslator] Błąd tłumaczenia, przełączam na MyMemory: {e}")
+
+    return MyMemoryTranslator(source="en-GB", target="pl-PL").translate(chunk)
+
+
+def _translate_sync(text: str) -> str:
+    chunks = _split_for_translator(text, max_len=450)
+    if not chunks:
+        return ""
+    translated_chunks = [_translate_chunk_sync(c) or "" for c in chunks]
+    return "\n".join(part for part in translated_chunks if part).strip()
 
 
 async def translate_to_pl(text: str, message_id: int | None = None) -> str:
